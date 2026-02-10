@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cursor Simulator</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      padding: 16px;
+      background: #f5f5f5;
+      min-width: 320px;
+    }
+    
+    .header {
+      margin-bottom: 20px;
+    }
+    
+    h1 {
+      font-size: 20px;
+      color: #1f2937;
+      margin-bottom: 8px;
+    }
+    
+    .subtitle {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    
+    .section {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 12px;
+    }
+    
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+    
+    .btn-primary.active {
+      background: #1d4ed8;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+    }
+    
+    .btn-secondary {
+      background: #10b981;
+      color: white;
+    }
+    
+    .btn-secondary:hover {
+      background: #059669;
+    }
+    
+    .btn-secondary.active {
+      background: #047857;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3);
+    }
+    
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+    }
+    
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+    
+    .btn-neutral {
+      background: #6b7280;
+      color: white;
+    }
+    
+    .btn-neutral:hover {
+      background: #4b5563;
+    }
+    
+    .status {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 8px;
+      padding: 8px;
+      background: #f9fafb;
+      border-radius: 4px;
+    }
+    
+    .status.success {
+      color: #059669;
+      background: #d1fae5;
+    }
+    
+    .status.error {
+      color: #dc2626;
+      background: #fee2e2;
+    }
+    
+    .timeline-container {
+      margin-top: 16px;
+    }
+    
+    .timeline {
+      width: 100%;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+    }
+    
+    .timeline-progress {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 4px;
+      transition: width 0.1s linear;
+    }
+    
+    .timeline-handle {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 16px;
+      height: 16px;
+      background: #3b82f6;
+      border: 2px solid white;
+      border-radius: 50%;
+      cursor: grab;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    
+    .timeline-handle:active {
+      cursor: grabbing;
+    }
+    
+    .timeline-info {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+    
+    .info-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    
+    .info-label {
+      font-weight: 500;
+      color: #374151;
+      min-width: 100px;
+    }
+    
+    .info-value {
+      color: #6b7280;
+    }
+    
+    .keyboard-hint {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Cursor Trajectory Simulator</h1>
+    <div class="subtitle">Design and test human-like cursor movements</div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">Design Mode</div>
+    <div class="button-group">
+      <button id="btn-add-waypoint" class="btn-primary">Add waypoint (Q)</button>
+      <button id="btn-move-waypoint" class="btn-secondary">Move waypoint (W)</button>
+      <button id="btn-add-constraint" class="btn-secondary">Add constraint area (A)</button>
+      <button id="btn-resize-constraint" class="btn-secondary">Resize constraint area (S)</button>
+      <button id="btn-quit-design" class="btn-neutral active">Quit design mode (Esc)</button>
+    </div>
+    <div class="button-group" style="margin-top:12px;">
+      <button id="btn-undo" class="btn-neutral" disabled>Undo (⌘Z)</button>
+      <button id="btn-redo" class="btn-neutral" disabled>Redo (⌘⇧Z)</button>
+    </div>
+    <div class="keyboard-hint" style="margin-top:8px;">Hold Q / W / A / S to enter mode; release key to quit design mode. Esc = quit.</div>
+    <div class="keyboard-hint" style="margin-top:4px;color:#059669;">Undo (⌘Z) and Redo (⌘⇧Z) apply to the last added waypoint or constraint.</div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">Actions</div>
+    <div class="button-group">
+      <button id="btn-simulate" class="btn-primary">Run Simulation</button>
+      <button id="btn-clear" class="btn-danger">Clear All</button>
+    </div>
+  </div>
+  
+  <div class="section">
+    <div class="section-title">Status</div>
+    <div id="status" class="status">Ready</div>
+    <div class="info-item">
+      <span class="info-label">Waypoints:</span>
+      <span id="waypoint-count" class="info-value">0</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Constraints:</span>
+      <span id="constraint-count" class="info-value">0</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Trajectory Points:</span>
+      <span id="trajectory-count" class="info-value">0</span>
+    </div>
+  </div>
+  
+  <div class="section" id="replay-section" style="display: none;">
+    <div class="section-title">Replay Controls</div>
+    <div class="button-group">
+      <button id="btn-replay" class="btn-primary">Start Replay</button>
+      <button id="btn-stop" class="btn-danger">Stop</button>
+    </div>
+    <div class="timeline-container">
+      <div class="timeline" id="timeline">
+        <div class="timeline-progress" id="timeline-progress"></div>
+        <div class="timeline-handle" id="timeline-handle"></div>
+      </div>
+      <div class="timeline-info">
+        <span id="timeline-current">0.0s</span>
+        <span id="timeline-total">0.0s</span>
+      </div>
+    </div>
+  </div>
+  
+  <script src="sidepanel.js"></script>
+</body>
+</html>
