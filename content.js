@@ -37,7 +37,11 @@ const state = {
   lastMouseX: 0,
   lastMouseY: 0,
   // Hover lock: element under cursor when entering design mode; we block leave events so menu stays open
-  menuLockElement: null
+  menuLockElement: null,
+  // Path constraint (D): waypoints for current path, preview cursor, default width (normalized)
+  pathWaypoints: [],
+  pathPreviewCursor: null,
+  pathDefaultWidth: 0.02
 };
 
 // Initialize overlay canvas
@@ -108,7 +112,8 @@ const MODE_HINTS = {
   addWaypoint: 'Hold Q — click to add waypoints. Release Q to exit.',
   moveWaypoint: 'Hold W — drag a waypoint to move it. Release W to exit.',
   addConstraint: 'Hold A — drag to draw a constraint. Release A to exit.',
-  resizeConstraint: 'Hold S — drag constraint edge/corner to resize. Release S to exit.',
+  addPathConstraint: 'Hold D — click to add path points; release D to finish corridor.',
+  resizeConstraint: 'Hold S — drag constraint edge/corner or path waypoint to resize. Release S to exit.',
   passthrough: '',
   replay: ''
 };
@@ -117,11 +122,32 @@ function clearMenuLock() {
   state.menuLockElement = null;
 }
 
+function finalizePathConstraint() {
+  if (state.pathWaypoints.length < 2) return;
+  const path = state.pathWaypoints.map(p => [p.x, p.y]);
+  const pathConstraint = {
+    type: 'path',
+    path,
+    width: state.pathDefaultWidth,
+    constraintType: 'keep-in'
+  };
+  state.constraints.push(pathConstraint);
+  state.undoStack.push({ type: 'constraint', data: { ...pathConstraint } });
+  state.redoStack = [];
+  try {
+    chrome.runtime.sendMessage({
+      type: 'constraintAdded',
+      constraint: pathConstraint,
+      count: state.constraints.length
+    });
+  } catch (_) {}
+}
+
 // Block mouseleave/mouseout from reaching the menu element so the menu never "sees" cursor leave
 function blockLeaveIfMenuLock(e) {
   const el = state.menuLockElement;
   if (!el || !el.isConnected) return;
-  const designModes = ['addWaypoint', 'moveWaypoint', 'addConstraint', 'resizeConstraint'];
+  const designModes = ['addWaypoint', 'moveWaypoint', 'addConstraint', 'addPathConstraint', 'resizeConstraint'];
   if (!designModes.includes(state.mode)) return;
   const target = e.target;
   if (el === target || el.contains(target)) {
@@ -131,6 +157,7 @@ function blockLeaveIfMenuLock(e) {
 }
 
 function setMode(newMode) {
+  const prevMode = state.mode;
   state.mode = newMode;
   state.draggingWaypointIndex = null;
   state.resizingConstraintIndex = null;
@@ -139,6 +166,11 @@ function setMode(newMode) {
   state.constraintCurrent = null;
 
   if (newMode === 'passthrough') {
+    if (prevMode === 'addPathConstraint' && state.pathWaypoints.length >= 2) {
+      finalizePathConstraint();
+    }
+    state.pathWaypoints = [];
+    state.pathPreviewCursor = null;
     clearMenuLock();
     if (state.overlay) {
       state.overlay.style.pointerEvents = 'none';
@@ -146,9 +178,12 @@ function setMode(newMode) {
       state.overlay.querySelector('.design-mode-hint')?.remove();
     }
     hideGhostCursor();
-  } else if (['addWaypoint', 'moveWaypoint', 'addConstraint', 'resizeConstraint'].includes(newMode)) {
+  } else if (['addWaypoint', 'moveWaypoint', 'addConstraint', 'addPathConstraint', 'resizeConstraint'].includes(newMode)) {
+    if (newMode !== 'addPathConstraint') {
+      state.pathWaypoints = [];
+      state.pathPreviewCursor = null;
+    }
     clearMenuLock();
-    // Capture element under cursor before overlay exists (menu/item so we can block leave events)
     const under = document.elementFromPoint(state.lastMouseX, state.lastMouseY);
     if (under && under !== document.body && under.isConnected) {
       state.menuLockElement = under;
@@ -165,6 +200,8 @@ function setMode(newMode) {
     }
     hint.textContent = MODE_HINTS[newMode] || '';
   } else if (newMode === 'replay') {
+    state.pathWaypoints = [];
+    state.pathPreviewCursor = null;
     clearMenuLock();
     createOverlay();
     state.overlay.style.pointerEvents = 'none';
@@ -269,12 +306,33 @@ function hitTestWaypoint(px, py) {
   return -1;
 }
 
-// Constraint handles: corners and edges. Returns { index, handle } or null.
-// handle: 'nw'|'n'|'ne'|'e'|'se'|'s'|'sw'|'w'
+// Distance from point (px,py) to segment (x1,y1)-(x2,y2)
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (len * len)));
+  const projX = x1 + t * dx, projY = y1 + t * dy;
+  return Math.hypot(px - projX, py - projY);
+}
+
+// Constraint handles: corners and edges for rect; waypoint_0, waypoint_1, width for path
 function hitTestConstraint(px, py) {
   const m = CONSTRAINT_EDGE_MARGIN;
   for (let i = state.constraints.length - 1; i >= 0; i--) {
     const c = state.constraints[i];
+    if (c.type === 'path' && c.path && c.path.length >= 2) {
+      const pathPx = c.path.map(([nx, ny]) => [nx * state.screenWidth, ny * state.screenHeight]);
+      const halfW = (c.width * state.screenWidth) / 2;
+      for (let j = 0; j < pathPx.length; j++) {
+        const d = Math.hypot(px - pathPx[j][0], py - pathPx[j][1]);
+        if (d <= WAYPOINT_HIT_RADIUS) return { index: i, handle: 'waypoint_' + j, waypointIndex: j };
+      }
+      for (let j = 0; j < pathPx.length - 1; j++) {
+        const d = distToSegment(px, py, pathPx[j][0], pathPx[j][1], pathPx[j + 1][0], pathPx[j + 1][1]);
+        if (d >= halfW - m && d <= halfW + m) return { index: i, handle: 'width' };
+      }
+      continue;
+    }
     const x = c.x * state.screenWidth;
     const y = c.y * state.screenHeight;
     const w = c.width * state.screenWidth;
@@ -331,6 +389,21 @@ function applyResize(index, handle, startRect, dx, dy) {
   renderOverlay();
 }
 
+function applyResizePath(index, handle, start, currentPx, currentPy) {
+  const c = state.constraints[index];
+  if (!c || c.type !== 'path' || !c.path) return;
+  if (handle.startsWith('waypoint_')) {
+    const j = parseInt(handle.replace('waypoint_', ''), 10);
+    if (j >= 0 && j < c.path.length) {
+      c.path[j] = [currentPx / state.screenWidth, currentPy / state.screenHeight];
+    }
+  } else if (handle === 'width') {
+    const deltaNorm = (currentPx - start.mx) / state.screenWidth;
+    c.width = Math.max(0.005, (start.width || c.width) + deltaNorm);
+  }
+  renderOverlay();
+}
+
 // Undo: remove last added waypoint or constraint
 function undo() {
   if (state.undoStack.length === 0) return false;
@@ -372,6 +445,76 @@ function notifyUndoRedo(undo, redo) {
       redo
     });
   } catch (_) {}
+}
+
+// Left perpendicular to segment (ax,ay)->(bx,by), normalized (90° CCW)
+function leftPerp(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: -dy / len, y: dx / len };
+}
+
+// Build connected corridor polygon from path points (each {x,y} or [x,y] in pixels) and halfWidth.
+// Returns polygon as [x,y, x,y, ...] for left boundary then right boundary (reversed) so segments connect.
+function buildCorridorPolygon(pathPx, halfWidthPx) {
+  const n = pathPx.length;
+  if (n < 2) return [];
+  const toX = (p) => (Array.isArray(p) ? p[0] : p.x);
+  const toY = (p) => (Array.isArray(p) ? p[1] : p.y);
+  const left = [];
+  const right = [];
+  for (let i = 0; i < n; i++) {
+    const px = toX(pathPx[i]), py = toY(pathPx[i]);
+    let nx, ny;
+    if (i === 0) {
+      const perp = leftPerp(px, py, toX(pathPx[1]), toY(pathPx[1]));
+      nx = perp.x; ny = perp.y;
+    } else if (i === n - 1) {
+      const perp = leftPerp(toX(pathPx[i - 1]), toY(pathPx[i - 1]), px, py);
+      nx = perp.x; ny = perp.y;
+    } else {
+      const perpPrev = leftPerp(toX(pathPx[i - 1]), toY(pathPx[i - 1]), px, py);
+      const perpNext = leftPerp(px, py, toX(pathPx[i + 1]), toY(pathPx[i + 1]));
+      let sx = perpPrev.x + perpNext.x, sy = perpPrev.y + perpNext.y;
+      const slen = Math.hypot(sx, sy);
+      if (slen < 1e-6) { nx = perpPrev.x; ny = perpPrev.y; }
+      else { nx = sx / slen; ny = sy / slen; }
+    }
+    left.push(px + halfWidthPx * nx, py + halfWidthPx * ny);
+    right.push(px - halfWidthPx * nx, py - halfWidthPx * ny);
+  }
+  const rightReversed = [];
+  for (let i = right.length - 2; i >= 0; i -= 2) rightReversed.push(right[i], right[i + 1]);
+  return [...left, ...rightReversed];
+}
+
+// Draw a single connected corridor polygon (for path constraints and preview)
+function drawCorridorPolygon(ctx, pathPx, halfWidthPx) {
+  const poly = buildCorridorPolygon(pathPx, halfWidthPx);
+  if (poly.length < 6) return;
+  ctx.beginPath();
+  ctx.moveTo(poly[0], poly[1]);
+  for (let i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i + 1]);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
+// Draw a single segment as rectangle (for backward compatibility / simple cases)
+function drawCorridorSegment(ctx, x1, y1, x2, y2, halfWidthPx) {
+  const perp = leftPerp(x1, y1, x2, y2);
+  const ax = x1 + perp.x * halfWidthPx, ay = y1 + perp.y * halfWidthPx;
+  const bx = x1 - perp.x * halfWidthPx, by = y1 - perp.y * halfWidthPx;
+  const cx = x2 - perp.x * halfWidthPx, cy = y2 - perp.y * halfWidthPx;
+  const dx = x2 + perp.x * halfWidthPx, dy = y2 + perp.y * halfWidthPx;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(dx, dy);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(bx, by);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 }
 
 // Rendering
@@ -416,21 +559,67 @@ function renderOverlay() {
   
   // Draw constraints
   state.constraints.forEach((constraint) => {
-    const x = constraint.x * state.screenWidth;
-    const y = constraint.y * state.screenHeight;
-    const width = constraint.width * state.screenWidth;
-    const height = constraint.height * state.screenHeight;
-    
     ctx.strokeStyle = constraint.constraintType === 'keep-in' ? '#10b981' : '#ef4444';
-    ctx.fillStyle = constraint.constraintType === 'keep-in' 
-      ? 'rgba(16, 185, 129, 0.1)' 
-      : 'rgba(239, 68, 68, 0.1)';
+    ctx.fillStyle = constraint.constraintType === 'keep-in' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
     ctx.setLineDash([5, 5]);
     ctx.lineWidth = 2;
-    ctx.fillRect(x, y, width, height);
-    ctx.strokeRect(x, y, width, height);
-    ctx.setLineDash([]);
+    if (constraint.type === 'path' && constraint.path && constraint.path.length >= 2) {
+      const halfW = (constraint.width * state.screenWidth) / 2;
+      const pathPx = constraint.path.map(([nx, ny]) => [nx * state.screenWidth, ny * state.screenHeight]);
+      drawCorridorPolygon(ctx, pathPx, halfW);
+      ctx.setLineDash([]);
+      constraint.path.forEach(([nx, ny], i) => {
+        const px = nx * state.screenWidth, py = ny * state.screenHeight;
+        ctx.fillStyle = '#10b981';
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+    } else {
+      const x = constraint.x * state.screenWidth;
+      const y = constraint.y * state.screenHeight;
+      const width = constraint.width * state.screenWidth;
+      const height = constraint.height * state.screenHeight;
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeRect(x, y, width, height);
+      ctx.setLineDash([]);
+    }
   });
+  
+  // Draw path constraint preview (rubber-band + connected corridor)
+  if (state.mode === 'addPathConstraint' && state.pathWaypoints.length > 0) {
+    const pts = state.pathWaypoints;
+    const halfW = (state.pathDefaultWidth * state.screenWidth) / 2;
+    ctx.strokeStyle = '#10b981';
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 2;
+    const pathPx = pts.map((p) => ({ x: p.pixelX, y: p.pixelY }));
+    if (state.pathPreviewCursor) pathPx.push(state.pathPreviewCursor);
+    if (pathPx.length >= 2) {
+      drawCorridorPolygon(ctx, pathPx, halfW);
+      for (let i = 0; i < pathPx.length - 1; i++) {
+        const a = pathPx[i], b = pathPx[i + 1];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+    pts.forEach((p, i) => {
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath();
+      ctx.arc(p.pixelX, p.pixelY, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+  }
   
   // Draw current constraint being drawn
   if (state.constraintStart && state.constraintCurrent) {
@@ -605,6 +794,16 @@ document.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     startConstraint(px, py);
+  } else if (state.mode === 'addPathConstraint') {
+    e.preventDefault();
+    e.stopPropagation();
+    state.pathWaypoints.push({
+      x: px / state.screenWidth,
+      y: py / state.screenHeight,
+      pixelX: px,
+      pixelY: py
+    });
+    renderOverlay();
   } else if (state.mode === 'resizeConstraint') {
     const hit = hitTestConstraint(px, py);
     if (hit) {
@@ -613,13 +812,17 @@ document.addEventListener('mousedown', (e) => {
       const c = state.constraints[hit.index];
       state.resizingConstraintIndex = hit.index;
       state.resizingHandle = hit.handle;
-      state.resizeStart = {
-        mx: px, my: py,
-        x: c.x * state.screenWidth,
-        y: c.y * state.screenHeight,
-        w: c.width * state.screenWidth,
-        h: c.height * state.screenHeight
-      };
+      if (c.type === 'path') {
+        state.resizeStart = { mx: px, my: py, path: c.path.map(([nx, ny]) => [nx * state.screenWidth, ny * state.screenHeight]), width: c.width, waypointIndex: hit.waypointIndex };
+      } else {
+        state.resizeStart = {
+          mx: px, my: py,
+          x: c.x * state.screenWidth,
+          y: c.y * state.screenHeight,
+          w: c.width * state.screenWidth,
+          h: c.height * state.screenHeight
+        };
+      }
     }
   }
 }, true);
@@ -649,10 +852,18 @@ document.addEventListener('mousemove', (e) => {
   } else if (state.resizingConstraintIndex !== null && state.resizeStart) {
     e.preventDefault();
     e.stopPropagation();
-    const dx = px - state.resizeStart.mx, dy = py - state.resizeStart.my;
-    applyResize(state.resizingConstraintIndex, state.resizingHandle,
-      { x: state.resizeStart.x, y: state.resizeStart.y, w: state.resizeStart.w, h: state.resizeStart.h },
-      dx, dy);
+    const c = state.constraints[state.resizingConstraintIndex];
+    if (c.type === 'path') {
+      applyResizePath(state.resizingConstraintIndex, state.resizingHandle, state.resizeStart, px, py);
+    } else {
+      const dx = px - state.resizeStart.mx, dy = py - state.resizeStart.my;
+      applyResize(state.resizingConstraintIndex, state.resizingHandle,
+        { x: state.resizeStart.x, y: state.resizeStart.y, w: state.resizeStart.w, h: state.resizeStart.h },
+        dx, dy);
+    }
+  } else if (state.mode === 'addPathConstraint') {
+    state.pathPreviewCursor = { x: px, y: py };
+    renderOverlay();
   }
 }, true);
 
@@ -689,6 +900,10 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     setMode('resizeConstraint');
+  } else if (e.key === 'd' || e.key === 'D') {
+    e.preventDefault();
+    e.stopPropagation();
+    setMode('addPathConstraint');
   } else if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation();
@@ -704,7 +919,8 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
-      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S') {
+      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S' ||
+      e.key === 'd' || e.key === 'D') {
     e.preventDefault();
     e.stopPropagation();
     setMode('passthrough');

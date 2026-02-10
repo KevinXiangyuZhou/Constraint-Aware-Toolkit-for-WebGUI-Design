@@ -1,0 +1,66 @@
+<div class="w-72 h-full bg-[#1e1e1e] text-gray-200 p-4 flex flex-col font-sans shadow-2xl border-l border-white/10">
+  
+    <div class="mb-6">
+      <h2 class="text-xs uppercase tracking-widest text-gray-500 font-bold">Designer Mode</h2>
+      <div id="active-status" class="mt-2 p-2 bg-blue-500/10 border border-blue-500/50 rounded text-blue-400 text-xs font-medium">
+        Hold a key to start drawing...
+      </div>
+    </div>
+  
+    <div class="grid grid-cols-2 gap-2 mb-6">
+      <button class="tool-btn group" data-key="Q">
+        <span class="key-label">Q</span>
+        <div class="icon-box"><svg class="w-6 h-6"><use href="#icon-map-pin"/></svg></div>
+        <span class="btn-text">Waypoint</span>
+      </button>
+      <button class="tool-btn" data-key="W">
+        <span class="key-label">W</span>
+        <div class="icon-box"><svg class="w-6 h-6"><use href="#icon-move"/></svg></div>
+        <span class="btn-text">Move</span>
+      </button>
+  
+      <button class="tool-btn border-green-500/30 hover:bg-green-500/10 active:bg-green-500" data-key="S">
+        <span class="key-label text-green-400">S</span>
+        <div class="icon-box text-green-400"><svg class="w-6 h-6"><use href="#icon-square"/></svg></div>
+        <span class="btn-text">Keep-In Area</span>
+      </button>
+      <button class="tool-btn border-green-500/30 hover:bg-green-500/10" data-key="D">
+        <span class="key-label text-green-400">D</span>
+        <div class="icon-box text-green-400"><svg class="w-6 h-6"><use href="#icon-route"/></svg></div>
+        <span class="btn-text">Keep-In Path</span>
+      </button>
+  
+      <button class="tool-btn border-red-500/30 hover:bg-red-500/10" data-key="F">
+        <span class="key-label text-red-400">F</span>
+        <div class="icon-box text-red-400"><svg class="w-6 h-6"><use href="#icon-box-select"/></svg></div>
+        <span class="btn-text">Keep-Out Area</span>
+      </button>
+      <button class="tool-btn border-red-500/30 hover:bg-red-500/10" data-key="G">
+        <span class="key-label text-red-400">G</span>
+        <div class="icon-box text-red-400"><svg class="w-6 h-6"><use href="#icon-spline"/></svg></div>
+        <span class="btn-text">Keep-Out Path</span>
+      </button>
+    </div>
+  
+    <div id="contextual-settings" class="mb-6 p-3 bg-white/5 rounded-lg transition-opacity duration-300 opacity-50">
+      <div class="flex justify-between items-center mb-2">
+        <label class="text-xs text-gray-400 uppercase">Path Width</label>
+        <span class="text-xs font-mono text-blue-400">24px</span>
+      </div>
+      <input type="range" class="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+    </div>
+  
+    <div class="mt-auto space-y-2">
+      <div class="flex gap-2">
+        <button class="flex-1 p-2 bg-white/5 hover:bg-white/10 rounded text-xs flex items-center justify-center gap-2">
+          <span>⌘Z</span> Undo
+        </button>
+        <button class="flex-1 p-2 bg-white/5 hover:bg-white/10 rounded text-xs flex items-center justify-center gap-2">
+          Redo <span>⌘⇧Z</span>
+        </button>
+      </div>
+      <button class="w-full p-3 border border-white/10 hover:border-white/30 rounded-lg text-sm font-medium text-gray-400 transition-colors">
+        Quit Designer Mode (Esc)
+      </button>
+    </div>
+  </div>

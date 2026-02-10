@@ -12,6 +12,7 @@ let isReplaying = false;
 const btnAddWaypoint = document.getElementById('btn-add-waypoint');
 const btnMoveWaypoint = document.getElementById('btn-move-waypoint');
 const btnAddConstraint = document.getElementById('btn-add-constraint');
+const btnAddPathConstraint = document.getElementById('btn-add-path-constraint');
 const btnResizeConstraint = document.getElementById('btn-resize-constraint');
 const btnQuitDesign = document.getElementById('btn-quit-design');
 const btnUndo = document.getElementById('btn-undo');
@@ -57,10 +58,11 @@ function updateStatus(message, type = '') {
 
 // Update mode buttons
 function updateModeButtons(mode) {
-  [btnAddWaypoint, btnMoveWaypoint, btnAddConstraint, btnResizeConstraint, btnQuitDesign].forEach(b => b?.classList?.remove('active'));
+  [btnAddWaypoint, btnMoveWaypoint, btnAddConstraint, btnAddPathConstraint, btnResizeConstraint, btnQuitDesign].forEach(b => b?.classList?.remove('active'));
   if (mode === 'addWaypoint') btnAddWaypoint?.classList.add('active');
   else if (mode === 'moveWaypoint') btnMoveWaypoint?.classList.add('active');
   else if (mode === 'addConstraint') btnAddConstraint?.classList.add('active');
+  else if (mode === 'addPathConstraint') btnAddPathConstraint?.classList.add('active');
   else if (mode === 'resizeConstraint') btnResizeConstraint?.classList.add('active');
   else btnQuitDesign?.classList.add('active');
 }
@@ -70,7 +72,8 @@ const MODE_HINTS = {
   addWaypoint: 'Hold Q, then click on the page to add waypoints',
   moveWaypoint: 'Hold W, then drag a waypoint to move it',
   addConstraint: 'Hold A, then drag on the page to draw a constraint',
-  resizeConstraint: 'Hold S, then drag a constraint edge/corner to resize',
+  addPathConstraint: 'Hold D, click to add path points; release D to finish corridor',
+  resizeConstraint: 'Hold S, then drag a constraint or path waypoint to resize',
   passthrough: 'Design mode off — use the page normally'
 };
 
@@ -89,6 +92,7 @@ async function setModeInPage(mode) {
 btnAddWaypoint.addEventListener('click', () => setModeInPage('addWaypoint'));
 btnMoveWaypoint.addEventListener('click', () => setModeInPage('moveWaypoint'));
 btnAddConstraint.addEventListener('click', () => setModeInPage('addConstraint'));
+btnAddPathConstraint.addEventListener('click', () => setModeInPage('addPathConstraint'));
 btnResizeConstraint.addEventListener('click', () => setModeInPage('resizeConstraint'));
 btnQuitDesign.addEventListener('click', () => setModeInPage('passthrough'));
 
@@ -154,18 +158,19 @@ btnSimulate.addEventListener('click', async () => {
       constraints: {
         coordinate_system: 'normalized',
         default_margin: 0.005,
-        regions: state.constraints.map(c => ({
-          constraint_type: c.constraintType === 'keep-in' ? 'keep_in' : 'keep_out',
-          geometry: {
-            type: c.type,
-            x: c.x,
-            y: c.y,
-            width: c.width,
-            height: c.height
-          },
-          margin: 0.002,
-          enabled: true
-        }))
+        regions: state.constraints.map(c => {
+          const base = {
+            constraint_type: c.constraintType === 'keep-in' ? 'keep_in' : 'keep_out',
+            margin: 0.002,
+            enabled: true
+          };
+          if (c.type === 'path' && c.path) {
+            base.geometry = { type: 'path', path: c.path, width: c.width };
+          } else {
+            base.geometry = { type: c.type || 'rectangle', x: c.x, y: c.y, width: c.width, height: c.height };
+          }
+          return base;
+        })
       }
     };
     
@@ -387,6 +392,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
     setModeInPage('resizeConstraint');
+  } else if (e.key === 'd' || e.key === 'D') {
+    e.preventDefault();
+    setModeInPage('addPathConstraint');
   } else if (e.key === 'Escape') {
     e.preventDefault();
     setModeInPage('passthrough');
@@ -402,7 +410,8 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
   // Release Q/W/A/S → quit design mode
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
-      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S') {
+      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S' ||
+      e.key === 'd' || e.key === 'D') {
     e.preventDefault();
     setModeInPage('passthrough');
   }
