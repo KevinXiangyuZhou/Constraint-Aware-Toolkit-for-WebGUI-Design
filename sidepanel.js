@@ -1,5 +1,10 @@
 // Side Panel Controller for Cursor Simulator
 
+// Initialize Lucide icons (replaces <i data-lucide="..."> with SVG)
+if (typeof lucide !== 'undefined') {
+  lucide.createIcons();
+}
+
 let currentMode = 'passthrough';
 let waypointCount = 0;
 let constraintCount = 0;
@@ -7,12 +12,15 @@ let trajectoryCount = 0;
 let currentTrajectory = [];
 let totalDuration = 0;
 let isReplaying = false;
+let screenWidth = 1920; // fallback for corridor width px <-> normalized
 
 // DOM elements
 const btnAddWaypoint = document.getElementById('btn-add-waypoint');
 const btnMoveWaypoint = document.getElementById('btn-move-waypoint');
-const btnAddConstraint = document.getElementById('btn-add-constraint');
-const btnAddPathConstraint = document.getElementById('btn-add-path-constraint');
+const btnRectKeepIn = document.getElementById('btn-rect-keep-in');
+const btnRectKeepOut = document.getElementById('btn-rect-keep-out');
+const btnPathKeepIn = document.getElementById('btn-path-keep-in');
+const btnPathKeepOut = document.getElementById('btn-path-keep-out');
 const btnResizeConstraint = document.getElementById('btn-resize-constraint');
 const btnQuitDesign = document.getElementById('btn-quit-design');
 const btnUndo = document.getElementById('btn-undo');
@@ -31,6 +39,44 @@ const timelineProgress = document.getElementById('timeline-progress');
 const timelineHandle = document.getElementById('timeline-handle');
 const timelineCurrent = document.getElementById('timeline-current');
 const timelineTotal = document.getElementById('timeline-total');
+const activeBadge = document.getElementById('active-badge');
+const modeHint = document.getElementById('mode-hint');
+const contextualSliderWrap = document.getElementById('contextual-slider-wrap');
+const corridorWidthSlider = document.getElementById('corridor-width-slider');
+const corridorWidthValue = document.getElementById('corridor-width-value');
+
+const TOOL_BUTTONS = [
+  btnAddWaypoint,
+  btnMoveWaypoint,
+  btnRectKeepIn,
+  btnRectKeepOut,
+  btnPathKeepIn,
+  btnPathKeepOut,
+  btnResizeConstraint,
+  btnQuitDesign
+];
+
+const ACTIVE_BADGE_LABELS = {
+  addWaypoint: 'ACTIVE: Add waypoint (Q)',
+  moveWaypoint: 'ACTIVE: Move waypoint (W)',
+  addRectKeepIn: 'ACTIVE: Area keep-in (S)',
+  addRectKeepOut: 'ACTIVE: Area keep-out (F)',
+  addPathKeepIn: 'ACTIVE: Path keep-in (D)',
+  addPathKeepOut: 'ACTIVE: Path keep-out (G)',
+  resizeConstraint: 'ACTIVE: Resize (A)',
+  passthrough: 'ACTIVE: Passthrough (Esc)'
+};
+
+const MODE_HINTS = {
+  addWaypoint: 'Click to add a waypoint. Release Q to exit.',
+  moveWaypoint: 'Drag a waypoint to move it. Release W to exit.',
+  addRectKeepIn: 'Drag to draw a keep-in area (green). Release S to exit.',
+  addRectKeepOut: 'Drag to draw a keep-out area (red). Release F to exit.',
+  addPathKeepIn: 'Click to add path points; release D to finalize corridor (green).',
+  addPathKeepOut: 'Click to add path points; release G to finalize corridor (red).',
+  resizeConstraint: 'Drag the edge of a constraint area to resize. Release A to exit.',
+  passthrough: 'Design mode off — use the page normally.'
+};
 
 // Get current tab
 async function getCurrentTab() {
@@ -56,26 +102,29 @@ function updateStatus(message, type = '') {
   statusDiv.className = `status ${type}`;
 }
 
-// Update mode buttons
+// Update mode buttons and active badge / hint / contextual slider
 function updateModeButtons(mode) {
-  [btnAddWaypoint, btnMoveWaypoint, btnAddConstraint, btnAddPathConstraint, btnResizeConstraint, btnQuitDesign].forEach(b => b?.classList?.remove('active'));
-  if (mode === 'addWaypoint') btnAddWaypoint?.classList.add('active');
-  else if (mode === 'moveWaypoint') btnMoveWaypoint?.classList.add('active');
-  else if (mode === 'addConstraint') btnAddConstraint?.classList.add('active');
-  else if (mode === 'addPathConstraint') btnAddPathConstraint?.classList.add('active');
-  else if (mode === 'resizeConstraint') btnResizeConstraint?.classList.add('active');
-  else btnQuitDesign?.classList.add('active');
-}
+  TOOL_BUTTONS.forEach(b => b?.classList?.remove('active'));
+  const byMode = {
+    addWaypoint: btnAddWaypoint,
+    moveWaypoint: btnMoveWaypoint,
+    addRectKeepIn: btnRectKeepIn,
+    addRectKeepOut: btnRectKeepOut,
+    addPathKeepIn: btnPathKeepIn,
+    addPathKeepOut: btnPathKeepOut,
+    resizeConstraint: btnResizeConstraint,
+    passthrough: btnQuitDesign
+  };
+  if (byMode[mode]) byMode[mode]?.classList.add('active');
 
-// Event listeners — hold key for design mode; release key to quit
-const MODE_HINTS = {
-  addWaypoint: 'Hold Q, then click on the page to add waypoints',
-  moveWaypoint: 'Hold W, then drag a waypoint to move it',
-  addConstraint: 'Hold A, then drag on the page to draw a constraint',
-  addPathConstraint: 'Hold D, click to add path points; release D to finish corridor',
-  resizeConstraint: 'Hold S, then drag a constraint or path waypoint to resize',
-  passthrough: 'Design mode off — use the page normally'
-};
+  activeBadge.textContent = ACTIVE_BADGE_LABELS[mode] || ACTIVE_BADGE_LABELS.passthrough;
+  modeHint.textContent = MODE_HINTS[mode] || MODE_HINTS.passthrough;
+
+  // Width slider: only visible when D (path keep-in) or G (path keep-out) is active
+  const showSlider = mode === 'addPathKeepIn' || mode === 'addPathKeepOut';
+  contextualSliderWrap.classList.remove('visible', 'hidden');
+  contextualSliderWrap.classList.add(showSlider ? 'visible' : 'hidden');
+}
 
 async function setModeInPage(mode) {
   try {
@@ -91,8 +140,10 @@ async function setModeInPage(mode) {
 
 btnAddWaypoint.addEventListener('click', () => setModeInPage('addWaypoint'));
 btnMoveWaypoint.addEventListener('click', () => setModeInPage('moveWaypoint'));
-btnAddConstraint.addEventListener('click', () => setModeInPage('addConstraint'));
-btnAddPathConstraint.addEventListener('click', () => setModeInPage('addPathConstraint'));
+btnRectKeepIn.addEventListener('click', () => setModeInPage('addRectKeepIn'));
+btnRectKeepOut.addEventListener('click', () => setModeInPage('addRectKeepOut'));
+btnPathKeepIn.addEventListener('click', () => setModeInPage('addPathKeepIn'));
+btnPathKeepOut.addEventListener('click', () => setModeInPage('addPathKeepOut'));
 btnResizeConstraint.addEventListener('click', () => setModeInPage('resizeConstraint'));
 btnQuitDesign.addEventListener('click', () => setModeInPage('passthrough'));
 
@@ -111,6 +162,26 @@ btnRedo.addEventListener('click', async () => {
     updateStatus('Refresh the page first, then try again.', 'error');
   }
 });
+
+// Corridor width slider: value in px; send normalized to content script
+function updateCorridorWidthLabel() {
+  const px = parseInt(corridorWidthSlider.value, 10);
+  corridorWidthValue.textContent = px + ' px';
+}
+
+async function onCorridorWidthChange() {
+  updateCorridorWidthLabel();
+  const px = parseInt(corridorWidthSlider.value, 10);
+  try {
+    const state = await sendToContentScript({ type: 'getState' });
+    const w = state.screenWidth || screenWidth;
+    screenWidth = w;
+    const normalized = px / w;
+    await sendToContentScript({ type: 'setPathDefaultWidth', normalized });
+  } catch (_) {}
+}
+
+corridorWidthSlider.addEventListener('input', onCorridorWidthChange);
 
 btnClear.addEventListener('click', async () => {
   if (confirm('Clear all waypoints and constraints?')) {
@@ -137,20 +208,12 @@ btnSimulate.addEventListener('click', async () => {
   btnSimulate.disabled = true;
   
   try {
-    // Get current state
     const state = await sendToContentScript({ type: 'getState' });
-    
-    // Get current tab info
     const tab = await getCurrentTab();
-    
-    // Get cookies for the current domain
     const cookies = await chrome.cookies.getAll({ url: tab.url });
-    
-    // Get viewport dimensions from the content script state
     const viewportWidth = state.screenWidth || tab.width || window.innerWidth || 1920;
     const viewportHeight = state.screenHeight || tab.height || window.innerHeight || 1080;
     
-    // Prepare task configuration
     const taskConfig = {
       waypoints: state.waypoints.map(wp => [wp.pixelX, wp.pixelY]),
       screen_width: viewportWidth,
@@ -174,12 +237,9 @@ btnSimulate.addEventListener('click', async () => {
       }
     };
     
-    // Send to backend
     const response = await fetch('http://localhost:8000/api/simulate', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         task: taskConfig,
         cookies: cookies.map(c => ({
@@ -191,46 +251,22 @@ btnSimulate.addEventListener('click', async () => {
           httpOnly: c.httpOnly,
           sameSite: c.sameSite
         })),
-        viewport: {
-          width: viewportWidth,
-          height: viewportHeight
-        },
+        viewport: { width: viewportWidth, height: viewportHeight },
         url: tab.url
       })
     });
     
-    if (!response.ok) {
-      throw new Error(`Server error: ${response.statusText}`);
-    }
-    
+    if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
     const result = await response.json();
     
     if (result.success && result.trajectory) {
       currentTrajectory = result.trajectory;
       trajectoryCount = currentTrajectory.length;
       trajectoryCountSpan.textContent = trajectoryCount;
-      
-      // Get total duration from backend response (last timestamp)
-      // Trajectory format: [x, y, timestamp]
-      if (result.total_duration) {
-        totalDuration = result.total_duration;
-      } else if (currentTrajectory.length > 0) {
-        // Fallback: use last timestamp
-        totalDuration = currentTrajectory[currentTrajectory.length - 1][2];
-      } else {
-        totalDuration = 0;
-      }
+      totalDuration = result.total_duration ?? (currentTrajectory.length > 0 ? currentTrajectory[currentTrajectory.length - 1][2] : 0);
       timelineTotal.textContent = `${totalDuration.toFixed(2)}s`;
-      
-      // Send trajectory to content script
-      await sendToContentScript({
-        type: 'setTrajectory',
-        trajectory: currentTrajectory
-      });
-      
-      // Show replay section
+      await sendToContentScript({ type: 'setTrajectory', trajectory: currentTrajectory });
       replaySection.style.display = 'block';
-      
       updateStatus(`Simulation complete: ${trajectoryCount} points generated`, 'success');
     } else {
       throw new Error(result.error || 'Unknown error');
@@ -248,12 +284,9 @@ btnReplay.addEventListener('click', async () => {
     updateStatus('No trajectory to replay', 'error');
     return;
   }
-  
-  // Reset timeline to the beginning
   timelineProgress.style.width = '0%';
   timelineHandle.style.left = '0%';
   timelineCurrent.textContent = '0.0s';
-  
   isReplaying = true;
   btnReplay.disabled = true;
   btnStop.disabled = false;
@@ -269,44 +302,30 @@ btnStop.addEventListener('click', async () => {
   updateStatus('Replay stopped', '');
 });
 
-// Timeline scrubbing
 let isDragging = false;
-
 timeline.addEventListener('mousedown', (e) => {
   if (currentTrajectory.length === 0) return;
   isDragging = true;
   updateTimelineFromEvent(e);
 });
-
 document.addEventListener('mousemove', (e) => {
-  if (isDragging) {
-    updateTimelineFromEvent(e);
-  }
+  if (isDragging) updateTimelineFromEvent(e);
 });
-
-document.addEventListener('mouseup', () => {
-  if (isDragging) {
-    isDragging = false;
-  }
-});
+document.addEventListener('mouseup', () => { if (isDragging) isDragging = false; });
 
 function updateTimelineFromEvent(e) {
   const rect = timeline.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const progress = Math.max(0, Math.min(1, x / rect.width));
-  const time = progress * totalDuration;
-  
-  seekToTime(time);
+  seekToTime(progress * totalDuration);
 }
 
 function seekToTime(time) {
   if (currentTrajectory.length === 0) return;
-  
   const progress = totalDuration > 0 ? time / totalDuration : 0;
   timelineProgress.style.width = `${progress * 100}%`;
   timelineHandle.style.left = `${progress * 100}%`;
   timelineCurrent.textContent = `${time.toFixed(2)}s`;
-  
   sendToContentScript({ type: 'seekToTime', time });
 }
 
@@ -377,24 +396,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Keyboard: hold Q/W/A/S for design mode; release to quit. Escape = quit. Cmd+Z = undo/redo
+// Keyboard: Q, W, S, D, F, G, A = design modes; Esc = passthrough; Cmd+Z / Cmd+Shift+Z = undo/redo
 document.addEventListener('keydown', (e) => {
-  if (e.repeat) return; // avoid re-sending setMode on key repeat so drags aren't cancelled
+  if (e.repeat) return;
   if (e.key === 'q' || e.key === 'Q') {
     e.preventDefault();
     setModeInPage('addWaypoint');
   } else if (e.key === 'w' || e.key === 'W') {
     e.preventDefault();
     setModeInPage('moveWaypoint');
-  } else if (e.key === 'a' || e.key === 'A') {
-    e.preventDefault();
-    setModeInPage('addConstraint');
   } else if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
-    setModeInPage('resizeConstraint');
+    setModeInPage('addRectKeepIn');
   } else if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    setModeInPage('addPathConstraint');
+    setModeInPage('addPathKeepIn');
+  } else if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    setModeInPage('addRectKeepOut');
+  } else if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault();
+    setModeInPage('addPathKeepOut');
+  } else if (e.key === 'a' || e.key === 'A') {
+    e.preventDefault();
+    setModeInPage('resizeConstraint');
   } else if (e.key === 'Escape') {
     e.preventDefault();
     setModeInPage('passthrough');
@@ -408,10 +433,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keyup', (e) => {
-  // Release Q/W/A/S → quit design mode
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
-      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S' ||
-      e.key === 'd' || e.key === 'D') {
+      e.key === 's' || e.key === 'S' || e.key === 'd' || e.key === 'D' ||
+      e.key === 'f' || e.key === 'F' || e.key === 'g' || e.key === 'G' ||
+      e.key === 'a' || e.key === 'A') {
     e.preventDefault();
     setModeInPage('passthrough');
   }
@@ -432,6 +457,12 @@ document.addEventListener('keyup', (e) => {
       updateModeButtons(currentMode);
       btnUndo.disabled = !(state.canUndo);
       btnRedo.disabled = !(state.canRedo);
+      screenWidth = state.screenWidth || screenWidth;
+      if (state.pathDefaultWidth != null && state.screenWidth) {
+        const px = Math.round(state.pathDefaultWidth * state.screenWidth);
+        corridorWidthSlider.value = Math.max(5, Math.min(80, px));
+        updateCorridorWidthLabel();
+      }
     }
   } catch (_) {
     updateStatus('Refresh the webpage tab, then open this panel again.', 'error');

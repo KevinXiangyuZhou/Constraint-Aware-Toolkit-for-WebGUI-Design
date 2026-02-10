@@ -9,7 +9,7 @@ const CONSTRAINT_EDGE_MARGIN = 12;
 
 // State management
 const state = {
-  mode: 'passthrough', // 'passthrough', 'addWaypoint', 'moveWaypoint', 'addConstraint', 'resizeConstraint', 'replay'
+  mode: 'passthrough', // 'passthrough', 'addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint', 'replay'
   waypoints: [],
   constraints: [],
   trajectory: [],
@@ -38,10 +38,11 @@ const state = {
   lastMouseY: 0,
   // Hover lock: element under cursor when entering design mode; we block leave events so menu stays open
   menuLockElement: null,
-  // Path constraint (D): waypoints for current path, preview cursor, default width (normalized)
+  // Path constraint (F/G): waypoints for current path, preview cursor, default width (normalized), type for next path
   pathWaypoints: [],
   pathPreviewCursor: null,
-  pathDefaultWidth: 0.02
+  pathDefaultWidth: 0.02,
+  pathConstraintType: 'keep-in'
 };
 
 // Initialize overlay canvas
@@ -111,9 +112,11 @@ function removeOverlay() {
 const MODE_HINTS = {
   addWaypoint: 'Hold Q — click to add waypoints. Release Q to exit.',
   moveWaypoint: 'Hold W — drag a waypoint to move it. Release W to exit.',
-  addConstraint: 'Hold A — drag to draw a constraint. Release A to exit.',
-  addPathConstraint: 'Hold D — click to add path points; release D to finish corridor.',
-  resizeConstraint: 'Hold S — drag constraint edge/corner or path waypoint to resize. Release S to exit.',
+  addRectKeepIn: 'Hold S — drag to draw a keep-in area (green). Release S to exit.',
+  addRectKeepOut: 'Hold F — drag to draw a keep-out area (red). Release F to exit.',
+  addPathKeepIn: 'Hold D — click to add path points; release D to finish corridor (green).',
+  addPathKeepOut: 'Hold G — click to add path points; release G to finish corridor (red).',
+  resizeConstraint: 'Hold A — drag constraint edge to resize. Release A to exit.',
   passthrough: '',
   replay: ''
 };
@@ -129,7 +132,7 @@ function finalizePathConstraint() {
     type: 'path',
     path,
     width: state.pathDefaultWidth,
-    constraintType: 'keep-in'
+    constraintType: state.pathConstraintType || 'keep-in'
   };
   state.constraints.push(pathConstraint);
   state.undoStack.push({ type: 'constraint', data: { ...pathConstraint } });
@@ -147,7 +150,7 @@ function finalizePathConstraint() {
 function blockLeaveIfMenuLock(e) {
   const el = state.menuLockElement;
   if (!el || !el.isConnected) return;
-  const designModes = ['addWaypoint', 'moveWaypoint', 'addConstraint', 'addPathConstraint', 'resizeConstraint'];
+  const designModes = ['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'];
   if (!designModes.includes(state.mode)) return;
   const target = e.target;
   if (el === target || el.contains(target)) {
@@ -166,7 +169,7 @@ function setMode(newMode) {
   state.constraintCurrent = null;
 
   if (newMode === 'passthrough') {
-    if (prevMode === 'addPathConstraint' && state.pathWaypoints.length >= 2) {
+    if ((prevMode === 'addPathKeepIn' || prevMode === 'addPathKeepOut') && state.pathWaypoints.length >= 2) {
       finalizePathConstraint();
     }
     state.pathWaypoints = [];
@@ -178,8 +181,10 @@ function setMode(newMode) {
       state.overlay.querySelector('.design-mode-hint')?.remove();
     }
     hideGhostCursor();
-  } else if (['addWaypoint', 'moveWaypoint', 'addConstraint', 'addPathConstraint', 'resizeConstraint'].includes(newMode)) {
-    if (newMode !== 'addPathConstraint') {
+  } else if (['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'].includes(newMode)) {
+    if (newMode === 'addPathKeepIn') state.pathConstraintType = 'keep-in';
+    else if (newMode === 'addPathKeepOut') state.pathConstraintType = 'keep-out';
+    if (newMode !== 'addPathKeepIn' && newMode !== 'addPathKeepOut') {
       state.pathWaypoints = [];
       state.pathPreviewCursor = null;
     }
@@ -568,9 +573,10 @@ function renderOverlay() {
       const pathPx = constraint.path.map(([nx, ny]) => [nx * state.screenWidth, ny * state.screenHeight]);
       drawCorridorPolygon(ctx, pathPx, halfW);
       ctx.setLineDash([]);
-      constraint.path.forEach(([nx, ny], i) => {
+      const dotColor = constraint.constraintType === 'keep-out' ? '#ef4444' : '#10b981';
+      constraint.path.forEach(([nx, ny]) => {
         const px = nx * state.screenWidth, py = ny * state.screenHeight;
-        ctx.fillStyle = '#10b981';
+        ctx.fillStyle = dotColor;
         ctx.beginPath();
         ctx.arc(px, py, 4, 0, Math.PI * 2);
         ctx.fill();
@@ -590,11 +596,12 @@ function renderOverlay() {
   });
   
   // Draw path constraint preview (rubber-band + connected corridor)
-  if (state.mode === 'addPathConstraint' && state.pathWaypoints.length > 0) {
+  if ((state.mode === 'addPathKeepIn' || state.mode === 'addPathKeepOut') && state.pathWaypoints.length > 0) {
     const pts = state.pathWaypoints;
     const halfW = (state.pathDefaultWidth * state.screenWidth) / 2;
-    ctx.strokeStyle = '#10b981';
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+    const isKeepOut = state.pathConstraintType === 'keep-out';
+    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#10b981';
+    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
     ctx.setLineDash([3, 3]);
     ctx.lineWidth = 2;
     const pathPx = pts.map((p) => ({ x: p.pixelX, y: p.pixelY }));
@@ -610,8 +617,8 @@ function renderOverlay() {
       }
     }
     ctx.setLineDash([]);
-    pts.forEach((p, i) => {
-      ctx.fillStyle = '#10b981';
+    pts.forEach((p) => {
+      ctx.fillStyle = isKeepOut ? '#ef4444' : '#10b981';
       ctx.beginPath();
       ctx.arc(p.pixelX, p.pixelY, 5, 0, Math.PI * 2);
       ctx.fill();
@@ -621,7 +628,7 @@ function renderOverlay() {
     });
   }
   
-  // Draw current constraint being drawn
+  // Draw current rectangle constraint being drawn
   if (state.constraintStart && state.constraintCurrent) {
     const start = state.constraintStart;
     const current = state.constraintCurrent;
@@ -629,9 +636,9 @@ function renderOverlay() {
     const y = Math.min(start.y, current.y);
     const width = Math.abs(current.x - start.x);
     const height = Math.abs(current.y - start.y);
-    
-    ctx.strokeStyle = '#10b981';
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.1)';
+    const isKeepOut = state.mode === 'addRectKeepOut';
+    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#10b981';
+    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)';
     ctx.setLineDash([5, 5]);
     ctx.lineWidth = 2;
     ctx.fillRect(x, y, width, height);
@@ -790,11 +797,11 @@ document.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       state.draggingWaypointIndex = idx;
     }
-  } else if (state.mode === 'addConstraint') {
+  } else if (state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') {
     e.preventDefault();
     e.stopPropagation();
     startConstraint(px, py);
-  } else if (state.mode === 'addPathConstraint') {
+  } else if (state.mode === 'addPathKeepIn' || state.mode === 'addPathKeepOut') {
     e.preventDefault();
     e.stopPropagation();
     state.pathWaypoints.push({
@@ -845,7 +852,7 @@ document.addEventListener('mousemove', (e) => {
     e.preventDefault();
     e.stopPropagation();
     updateWaypointPosition(state.draggingWaypointIndex, px, py);
-  } else if (state.mode === 'addConstraint' && state.constraintStart) {
+  } else if ((state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') && state.constraintStart) {
     e.preventDefault();
     e.stopPropagation();
     updateConstraint(px, py);
@@ -861,17 +868,18 @@ document.addEventListener('mousemove', (e) => {
         { x: state.resizeStart.x, y: state.resizeStart.y, w: state.resizeStart.w, h: state.resizeStart.h },
         dx, dy);
     }
-  } else if (state.mode === 'addPathConstraint') {
+  } else if (state.mode === 'addPathKeepIn' || state.mode === 'addPathKeepOut') {
     state.pathPreviewCursor = { x: px, y: py };
     renderOverlay();
   }
 }, true);
 
 document.addEventListener('mouseup', (e) => {
-  if (state.mode === 'addConstraint' && state.constraintStart) {
+  if ((state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') && state.constraintStart) {
     e.preventDefault();
     e.stopPropagation();
-    finishConstraint(e.clientX, e.clientY, 'keep-in');
+    const constraintType = state.mode === 'addRectKeepOut' ? 'keep-out' : 'keep-in';
+    finishConstraint(e.clientX, e.clientY, constraintType);
   } else if (state.draggingWaypointIndex !== null) {
     state.draggingWaypointIndex = null;
   } else if (state.resizingConstraintIndex !== null) {
@@ -892,18 +900,26 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     setMode('moveWaypoint');
-  } else if (e.key === 'a' || e.key === 'A') {
-    e.preventDefault();
-    e.stopPropagation();
-    setMode('addConstraint');
   } else if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
     e.stopPropagation();
-    setMode('resizeConstraint');
+    setMode('addRectKeepIn');
   } else if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
     e.stopPropagation();
-    setMode('addPathConstraint');
+    setMode('addPathKeepIn');
+  } else if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault();
+    e.stopPropagation();
+    setMode('addRectKeepOut');
+  } else if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault();
+    e.stopPropagation();
+    setMode('addPathKeepOut');
+  } else if (e.key === 'a' || e.key === 'A') {
+    e.preventDefault();
+    e.stopPropagation();
+    setMode('resizeConstraint');
   } else if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation();
@@ -919,8 +935,9 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
-      e.key === 'a' || e.key === 'A' || e.key === 's' || e.key === 'S' ||
-      e.key === 'd' || e.key === 'D') {
+      e.key === 's' || e.key === 'S' || e.key === 'd' || e.key === 'D' ||
+      e.key === 'f' || e.key === 'F' || e.key === 'g' || e.key === 'G' ||
+      e.key === 'a' || e.key === 'A') {
     e.preventDefault();
     e.stopPropagation();
     setMode('passthrough');
@@ -958,8 +975,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         screenWidth: state.screenWidth,
         screenHeight: state.screenHeight,
         canUndo: state.undoStack.length > 0,
-        canRedo: state.redoStack.length > 0
+        canRedo: state.redoStack.length > 0,
+        pathDefaultWidth: state.pathDefaultWidth
       });
+      break;
+    case 'setPathDefaultWidth':
+      if (typeof message.normalized === 'number' && message.normalized > 0) {
+        state.pathDefaultWidth = message.normalized;
+      }
+      sendResponse({ success: true });
       break;
     case 'undo':
       sendResponse({ success: undo() });

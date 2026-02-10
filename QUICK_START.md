@@ -20,16 +20,18 @@ Server runs on `http://localhost:8000`
 
 1. Click extension icon → Open side panel
 2. Navigate to a website
-3. Press `W` → Click to add waypoints
-4. Press `C` → Drag to add constraints
-5. Click "Run Simulation"
-6. Use replay controls to watch ghost cursor
+3. Hold **Q** → Click to add waypoints; release Q to exit
+4. Hold **S** or **D** → Drag to add rectangle constraints (keep-in / keep-out)
+5. Hold **F** or **G** → Click to add path constraints; release to finalize
+6. Click "Run Simulation"
+7. Use replay controls to watch ghost cursor
 
 ## Keyboard Shortcuts
 
-- `W` - Waypoint mode
-- `C` - Constraint mode  
-- `Escape` - Passthrough mode
+- **Q** – Add waypoint | **W** – Move waypoint
+- **S** – Rect keep-in | **D** – Rect keep-out | **F** – Path keep-in | **G** – Path keep-out
+- **A** – Resize constraint | **Escape** – Passthrough
+- **⌘Z** / **⌘⇧Z** – Undo / Redo
 
 ## Troubleshooting
 

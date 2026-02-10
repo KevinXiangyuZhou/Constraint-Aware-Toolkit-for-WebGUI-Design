@@ -14,8 +14,9 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       padding: 16px;
-      background: #f5f5f5;
+      background: #1e1e1e;
       min-width: 320px;
+      color: #e5e5e5;
     }
     
     .header {
@@ -23,28 +24,219 @@
     }
     
     h1 {
-      font-size: 20px;
-      color: #1f2937;
-      margin-bottom: 8px;
+      font-size: 18px;
+      color: #e5e5e5;
+      margin-bottom: 6px;
     }
     
     .subtitle {
       font-size: 12px;
-      color: #6b7280;
+      color: #a3a3a3;
     }
     
+    /* Design Mode block */
+    .design-mode-block {
+      margin-bottom: 20px;
+    }
+    
+    .design-mode-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e5e5e5;
+      letter-spacing: 0.02em;
+      margin-bottom: 8px;
+    }
+    
+    .active-badge {
+      display: inline-block;
+      background: rgba(96, 165, 250, 0.25);
+      color: #93c5fd;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      border: 1px solid rgba(96, 165, 250, 0.4);
+    }
+    
+    .mode-hint {
+      font-size: 12px;
+      color: #a3a3a3;
+      margin-bottom: 16px;
+      line-height: 1.4;
+    }
+    
+    .palette-section {
+      margin-bottom: 16px;
+    }
+    
+    .palette-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a3a3a3;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+    
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    
+    .tool-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 6px;
+      background: #2d2d2d;
+      border: 1px solid #404040;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+      color: #e5e5e5;
+      font-size: 11px;
+      font-weight: 500;
+      min-height: 72px;
+    }
+    
+    .tool-btn:hover {
+      background: #363636;
+      border-color: #525252;
+    }
+    
+    .tool-btn.active {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
+      background: rgba(96, 165, 250, 0.08);
+    }
+    
+    .tool-btn .icon {
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .tool-btn .icon.icon-square {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+    
+    .tool-btn .icon.icon-square svg {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+    }
+    
+    .tool-btn .shortcut {
+      font-size: 10px;
+      color: #737373;
+    }
+    
+    .tool-btn.active .shortcut {
+      color: #93c5fd;
+    }
+    
+    .tool-grid-placeholder {
+      min-height: 1px;
+    }
+    
+    .tool-btn-keepin .icon { background: rgba(34, 197, 94, 0.12); }
+    .tool-btn-keepout .icon { background: rgba(239, 68, 68, 0.12); }
+    .tool-btn-accent .icon { background: rgba(96, 165, 250, 0.12); }
+    .tool-btn-danger .icon { background: rgba(239, 68, 68, 0.12); }
+    
+    /* Contextual settings with transition */
+    .contextual-settings {
+      margin-top: 16px;
+      overflow: hidden;
+      transition: opacity 0.2s ease, max-height 0.2s ease;
+    }
+    
+    .contextual-settings.hidden {
+      opacity: 0;
+      max-height: 0;
+      margin-top: 0;
+      pointer-events: none;
+    }
+    
+    .contextual-settings.visible {
+      opacity: 1;
+      max-height: 120px;
+    }
+    
+    .contextual-settings-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a3a3a3;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+    }
+    
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .slider-label {
+      font-size: 12px;
+      color: #e5e5e5;
+      min-width: 100px;
+    }
+    
+    input[type="range"] {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #404040;
+      border-radius: 3px;
+      outline: none;
+    }
+    
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #e5e5e5;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      transition: transform 0.15s;
+    }
+    
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.08);
+    }
+    
+    .slider-value {
+      font-size: 12px;
+      color: #a3a3a3;
+      min-width: 44px;
+      text-align: right;
+    }
+    
+    /* Actions section */
     .section {
-      background: white;
+      background: #2d2d2d;
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 16px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      border: 1px solid #404040;
     }
     
     .section-title {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
-      color: #374151;
+      color: #e5e5e5;
       margin-bottom: 12px;
     }
     
@@ -56,131 +248,66 @@
     
     button {
       padding: 10px 16px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
+      border-radius: 8px;
+      font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
     }
     
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    
-    button:active {
-      transform: translateY(0);
-    }
-    
+    /* Action buttons: match tool-panel style (border, radius, dark base) */
     .btn-primary {
-      background: #3b82f6;
-      color: white;
+      background: rgba(96, 165, 250, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(96, 165, 250, 0.4);
     }
     
     .btn-primary:hover {
-      background: #2563eb;
+      background: rgba(96, 165, 250, 0.2);
+      border-color: #60a5fa;
     }
     
-    .btn-primary.active {
-      background: #1d4ed8;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
-    }
-    
-    .btn-secondary {
-      background: #10b981;
-      color: white;
-    }
-    
-    .btn-secondary:hover {
-      background: #059669;
-    }
-    
-    .btn-secondary.active {
-      background: #047857;
-      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3);
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
     
     .btn-danger {
-      background: #ef4444;
-      color: white;
+      background: rgba(239, 68, 68, 0.12);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
     }
     
     .btn-danger:hover {
-      background: #dc2626;
+      background: rgba(239, 68, 68, 0.2);
+      border-color: #ef4444;
     }
     
-    .btn-neutral {
-      background: #6b7280;
-      color: white;
-    }
-    
-    .btn-neutral:hover {
-      background: #4b5563;
+    .btn-danger:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
     
     .status {
       font-size: 12px;
-      color: #6b7280;
+      color: #a3a3a3;
       margin-top: 8px;
-      padding: 8px;
-      background: #f9fafb;
-      border-radius: 4px;
+      padding: 8px 10px;
+      background: #262626;
+      border-radius: 6px;
+      border: 1px solid #404040;
     }
     
     .status.success {
-      color: #059669;
-      background: #d1fae5;
+      color: #86efac;
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.3);
     }
     
     .status.error {
-      color: #dc2626;
-      background: #fee2e2;
-    }
-    
-    .timeline-container {
-      margin-top: 16px;
-    }
-    
-    .timeline {
-      width: 100%;
-      height: 8px;
-      background: #e5e7eb;
-      border-radius: 4px;
-      cursor: pointer;
-      position: relative;
-    }
-    
-    .timeline-progress {
-      height: 100%;
-      background: #3b82f6;
-      border-radius: 4px;
-      transition: width 0.1s linear;
-    }
-    
-    .timeline-handle {
-      position: absolute;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      width: 16px;
-      height: 16px;
-      background: #3b82f6;
-      border: 2px solid white;
-      border-radius: 50%;
-      cursor: grab;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    }
-    
-    .timeline-handle:active {
-      cursor: grabbing;
-    }
-    
-    .timeline-info {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 8px;
-      font-size: 11px;
-      color: #6b7280;
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.3);
     }
     
     .info-item {
@@ -188,23 +315,58 @@
       align-items: center;
       gap: 8px;
       margin-bottom: 8px;
+      font-size: 12px;
     }
     
     .info-label {
       font-weight: 500;
-      color: #374151;
+      color: #a3a3a3;
       min-width: 100px;
     }
     
     .info-value {
-      color: #6b7280;
+      color: #e5e5e5;
     }
     
-    .keyboard-hint {
-      font-size: 11px;
-      color: #9ca3af;
-      margin-top: 4px;
-      font-style: italic;
+    /* Replay timeline: match corridor-width slider (track + thumb style) */
+    .timeline-container { margin-top: 16px; }
+    .timeline {
+      width: 100%;
+      height: 6px;
+      background: #404040;
+      border-radius: 3px;
+      cursor: pointer;
+      position: relative;
+    }
+    .timeline-progress {
+      height: 100%;
+      background: #60a5fa;
+      border-radius: 3px;
+      transition: width 0.1s linear;
+    }
+    .timeline-handle {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 16px;
+      height: 16px;
+      background: #e5e5e5;
+      border: none;
+      border-radius: 50%;
+      cursor: grab;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      transition: transform 0.15s;
+    }
+    .timeline-handle:hover {
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+    .timeline-handle:active { cursor: grabbing; }
+    .timeline-info {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #a3a3a3;
     }
   </style>
 </head>
@@ -214,29 +376,98 @@
     <div class="subtitle">Design and test human-like cursor movements</div>
   </div>
   
-  <div class="section">
-    <div class="section-title">Design Mode</div>
-    <div class="button-group">
-      <button id="btn-add-waypoint" class="btn-primary">Add waypoint (Q)</button>
-      <button id="btn-move-waypoint" class="btn-secondary">Move waypoint (W)</button>
-      <button id="btn-add-constraint" class="btn-secondary">Add constraint area (A)</button>
-      <button id="btn-add-path-constraint" class="btn-secondary">Add path constraint (D)</button>
-      <button id="btn-resize-constraint" class="btn-secondary">Resize constraint area (S)</button>
-      <button id="btn-quit-design" class="btn-neutral active">Quit design mode (Esc)</button>
+  <div class="design-mode-block">
+    <div class="design-mode-title">DESIGN MODE</div>
+    <div id="active-badge" class="active-badge">ACTIVE: Passthrough (Esc)</div>
+    <div id="mode-hint" class="mode-hint">Design mode off — use the page normally.</div>
+    
+    <div class="palette-section">
+      <div class="palette-section-title">Waypoint Management</div>
+      <div class="tool-grid">
+        <button type="button" id="btn-add-waypoint" class="tool-btn" title="Add waypoint (Q)">
+          <span class="icon icon-square"><i data-lucide="waypoints"></i></span>
+          <span>Add Waypoint</span>
+          <span class="shortcut">Q</span>
+        </button>
+        <button type="button" id="btn-move-waypoint" class="tool-btn" title="Move waypoint (W)">
+          <span class="icon icon-square"><i data-lucide="move"></i></span>
+          <span>Move Waypoint</span>
+          <span class="shortcut">W</span>
+        </button>
+        <span class="tool-grid-placeholder"></span>
+      </div>
     </div>
-    <div class="button-group" style="margin-top:12px;">
-      <button id="btn-undo" class="btn-neutral" disabled>Undo (⌘Z)</button>
-      <button id="btn-redo" class="btn-neutral" disabled>Redo (⌘⇧Z)</button>
+    
+    <div class="palette-section">
+      <div class="palette-section-title">Constraints Management</div>
+      <div class="tool-grid">
+        <button type="button" id="btn-rect-keep-in" class="tool-btn tool-btn-keepin" title="Area keep-in (S)">
+          <span class="icon icon-square"><i data-lucide="square"></i></span>
+          <span>Area</span>
+          <span class="shortcut">S</span>
+        </button>
+        <button type="button" id="btn-path-keep-in" class="tool-btn tool-btn-keepin" title="Corridor keep-in (D)">
+          <span class="icon icon-square"><i data-lucide="route"></i></span>
+          <span>Corridor</span>
+          <span class="shortcut">D</span>
+        </button>
+        <button type="button" id="btn-rect-keep-out" class="tool-btn tool-btn-keepout" title="Area keep-out (F)">
+          <span class="icon icon-square"><i data-lucide="box-select"></i></span>
+          <span>Area</span>
+          <span class="shortcut">F</span>
+        </button>
+        <button type="button" id="btn-path-keep-out" class="tool-btn tool-btn-keepout" title="Corridor keep-out (G)">
+          <span class="icon icon-square"><i data-lucide="route-off"></i></span>
+          <span>Corridor</span>
+          <span class="shortcut">G</span>
+        </button>
+        <button type="button" id="btn-resize-constraint" class="tool-btn tool-btn-accent" title="Adjust constraint size or positions(A)">
+          <span class="icon icon-square"><i data-lucide="pointer"></i></span>
+          <span>Adjust</span>
+          <span class="shortcut">A</span>
+        </button>
+        <span class="tool-grid-placeholder"></span>
+      </div>
+      <div id="contextual-slider-wrap" class="contextual-settings hidden">
+        <div class="contextual-settings-title">Corridor width</div>
+        <div class="slider-row">
+          <span class="slider-label">Default width</span>
+          <input type="range" id="corridor-width-slider" min="5" max="80" value="20" step="1">
+          <span id="corridor-width-value" class="slider-value">20 px</span>
+        </div>
+      </div>
     </div>
-    <div class="keyboard-hint" style="margin-top:8px;">Hold Q / W / A / S / D to enter mode; release key to quit. Esc = quit.</div>
-    <div class="keyboard-hint" style="margin-top:4px;color:#059669;">Undo (⌘Z) and Redo (⌘⇧Z) apply to the last added waypoint or constraint.</div>
+    
+    <div class="palette-section" style="margin-top: 16px;">
+      <div class="palette-section-title">System</div>
+      <div class="tool-grid">
+        <button type="button" id="btn-quit-design" class="tool-btn active" title="Quit Design Mode (Esc)">
+          <span class="icon icon-square"><i data-lucide="pencil-off"></i></span>
+          <span>Quit Design</span>
+          <span class="shortcut">Esc</span>
+        </button>
+        <button type="button" id="btn-undo" class="tool-btn" title="Undo (⌘Z)" disabled>
+          <span class="icon icon-square"><i data-lucide="undo-2"></i></span>
+          <span>Undo</span>
+          <span class="shortcut">⌘Z</span>
+        </button>
+        <button type="button" id="btn-redo" class="tool-btn" title="Redo (⌘⇧Z)" disabled>
+          <span class="icon icon-square"><i data-lucide="redo-2"></i></span>
+          <span>Redo</span>
+          <span class="shortcut">⌘⇧Z</span>
+        </button>
+        <button type="button" id="btn-clear" class="tool-btn tool-btn-danger" title="Clear all">
+          <span class="icon icon-square"><i data-lucide="trash-2"></i></span>
+          <span>Clear All</span>
+        </button>
+      </div>
+    </div>
   </div>
   
   <div class="section">
     <div class="section-title">Actions</div>
     <div class="button-group">
       <button id="btn-simulate" class="btn-primary">Run Simulation</button>
-      <button id="btn-clear" class="btn-danger">Clear All</button>
     </div>
   </div>
   
@@ -275,6 +506,7 @@
     </div>
   </div>
   
+  <script src="lucide.min.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

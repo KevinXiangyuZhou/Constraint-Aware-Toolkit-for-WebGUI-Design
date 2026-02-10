@@ -50,11 +50,16 @@ You can test it by visiting:
 
 1. **Open Side Panel**: Click the extension icon in the toolbar, or right-click the icon and select "Open side panel"
 2. **Navigate to a website**: Go to any website you want to test (e.g., a site with cascading menus)
-3. **Design Mode**:
-   - Click "Add Waypoints (W)" or press `W` key
-   - Click on the page to add waypoints (blue dots)
-   - Click "Add Constraints (C)" or press `C` key
-   - Click and drag to draw constraint zones (green boxes)
+3. **Design Mode** (hold key to enter mode; release to exit):
+   - **Q** – Add waypoint: click on the page to add waypoints (blue dots)
+   - **W** – Move waypoint: drag a waypoint to move it
+   - **S** – Rectangle keep-in: drag to draw a green constraint zone
+   - **D** – Rectangle keep-out: drag to draw a red constraint zone
+   - **F** – Path keep-in: click to add path points; release F to finalize green corridor
+   - **G** – Path keep-out: click to add path points; release G to finalize red corridor
+   - **A** – Resize: drag the edge of a constraint area to resize
+   - **Esc** – Passthrough (quit design mode)
+   - **⌘Z** / **⌘⇧Z** – Undo / Redo last waypoint or constraint
 4. **Run Simulation**: Click "Run Simulation" button
    - The extension sends the task configuration to the backend
    - Backend generates trajectory using `hcs_package`
@@ -65,9 +70,15 @@ You can test it by visiting:
 
 ## Keyboard Shortcuts
 
-- `W` - Switch to Waypoint mode
-- `C` - Switch to Constraint mode
-- `Escape` - Switch to Passthrough mode (normal interaction)
+- **Q** – Add waypoint (hold, then click to add; release to exit)
+- **W** – Move waypoint (hold, then drag a waypoint; release to exit)
+- **S** – Rectangle keep-in (hold, drag to draw; release to exit)
+- **D** – Rectangle keep-out (hold, drag to draw; release to exit)
+- **F** – Path keep-in (hold, click to add path points; release to finalize)
+- **G** – Path keep-out (hold, click to add path points; release to finalize)
+- **A** – Resize constraint (hold, drag edge of constraint; release to exit)
+- **Escape** – Passthrough mode (normal interaction)
+- **⌘Z** / **⌘⇧Z** – Undo / Redo last waypoint or constraint
 
 ## File Structure
 
@@ -127,8 +138,8 @@ Generates a cursor trajectory from task configuration.
 
 ### "Refresh this page" or waypoints/constraints not drawing
 - **You must refresh the webpage tab (F5 or Cmd+R) after installing or reloading the extension.** Content scripts only run in tabs that were loaded after the extension was active.
-- After clicking "Add Waypoints" or "Add Constraints", **click on the webpage itself** (not the side panel). A black bar at the top of the page will say "Click to add waypoints" or "Drag to draw constraint zone".
-- You can press **W** or **C** from the side panel (with focus in the panel) to switch mode; then click on the webpage to draw.
+- After choosing a tool (e.g. "Waypoint" or "Rect keep in"), **click on the webpage itself** (not the side panel). A hint at the top of the page shows the current action.
+- You can press **Q**, **W**, **S**, **D**, **F**, **G**, or **A** (with focus on the page or side panel) to enter that mode; hold the key while drawing, then release to exit.
 
 ### Backend not responding
 - Check that the server is running: `curl http://localhost:8000/health`
