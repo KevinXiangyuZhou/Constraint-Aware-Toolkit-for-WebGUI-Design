@@ -328,6 +328,71 @@
       color: #e5e5e5;
     }
     
+    /* Toggle switch for debugger option */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #404040;
+      border-radius: 10px;
+      transition: background 0.2s;
+    }
+    
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      width: 16px;
+      height: 16px;
+      background: #e5e5e5;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    
+    .toggle-switch input:checked + .toggle-slider {
+      background: #60a5fa;
+    }
+    
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(16px);
+    }
+    
+    .toggle-text {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .toggle-label {
+      font-size: 12px;
+      color: #e5e5e5;
+    }
+    
+    .toggle-note {
+      font-size: 10px;
+      color: #737373;
+    }
+    
     /* Replay timeline: match corridor-width slider (track + thumb style) */
     .timeline-container { margin-top: 16px; }
     .timeline {
@@ -502,6 +567,16 @@
       <div class="timeline-info">
         <span id="timeline-current">0.0s</span>
         <span id="timeline-total">0.0s</span>
+      </div>
+    </div>
+    <div class="toggle-row" style="margin-top: 12px;">
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggle-debugger" checked>
+        <span class="toggle-slider"></span>
+      </label>
+      <div class="toggle-text">
+        <span class="toggle-label">Enable CSS :hover</span>
+        <span class="toggle-note">(shows warning bar)</span>
       </div>
     </div>
   </div>

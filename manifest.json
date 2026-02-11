@@ -14,7 +14,8 @@
     "sidePanel",
     "activeTab",
     "cookies",
-    "storage"
+    "storage",
+    "debugger"
   ],
   "host_permissions": [
     "http://localhost:8000/*",

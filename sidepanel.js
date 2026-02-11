@@ -44,6 +44,7 @@ const modeHint = document.getElementById('mode-hint');
 const contextualSliderWrap = document.getElementById('contextual-slider-wrap');
 const corridorWidthSlider = document.getElementById('corridor-width-slider');
 const corridorWidthValue = document.getElementById('corridor-width-value');
+const toggleDebugger = document.getElementById('toggle-debugger');
 
 const TOOL_BUTTONS = [
   btnAddWaypoint,
@@ -182,6 +183,13 @@ async function onCorridorWidthChange() {
 }
 
 corridorWidthSlider.addEventListener('input', onCorridorWidthChange);
+
+// Debugger toggle: enable/disable CSS :hover via chrome.debugger
+toggleDebugger.addEventListener('change', async () => {
+  try {
+    await sendToContentScript({ type: 'setUseDebugger', enabled: toggleDebugger.checked });
+  } catch (_) {}
+});
 
 btnClear.addEventListener('click', async () => {
   if (confirm('Clear all waypoints and constraints?')) {

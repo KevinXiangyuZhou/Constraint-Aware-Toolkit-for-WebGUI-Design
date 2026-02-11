@@ -36,13 +36,16 @@ const state = {
   // Cursor position (capture element before overlay when entering design mode)
   lastMouseX: 0,
   lastMouseY: 0,
-  // Hover lock: element under cursor when entering design mode; we block leave events so menu stays open
-  menuLockElement: null,
+  // (menuLockElement removed — we now block all page events during design mode)
   // Path constraint (F/G): waypoints for current path, preview cursor, default width (normalized), type for next path
   pathWaypoints: [],
   pathPreviewCursor: null,
   pathDefaultWidth: 0.02,
-  pathConstraintType: 'keep-in'
+  pathConstraintType: 'keep-in',
+  // Replay: track previous element for enter/leave event pairs
+  replayPrevElement: null,
+  // Replay: use chrome.debugger API for CSS :hover
+  useDebugger: true
 };
 
 // Initialize overlay canvas
@@ -55,7 +58,7 @@ function createOverlay() {
   
   const overlay = document.createElement('div');
   overlay.id = 'cursor-simulator-overlay';
-  overlay.style.pointerEvents = 'none'; // default; set to 'auto' in design modes
+  overlay.style.pointerEvents = 'none'; // always none; we block page events via capture-phase listeners
   overlay.style.width = '100vw';
   overlay.style.height = '100vh';
   overlay.style.position = 'fixed';
@@ -121,8 +124,11 @@ const MODE_HINTS = {
   replay: ''
 };
 
-function clearMenuLock() {
-  state.menuLockElement = null;
+// List of design modes where we freeze the page (block all mouse/pointer events)
+const DESIGN_MODES = ['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'];
+
+function isDesignMode() {
+  return DESIGN_MODES.includes(state.mode);
 }
 
 function finalizePathConstraint() {
@@ -146,17 +152,15 @@ function finalizePathConstraint() {
   } catch (_) {}
 }
 
-// Block mouseleave/mouseout from reaching the menu element so the menu never "sees" cursor leave
-function blockLeaveIfMenuLock(e) {
-  const el = state.menuLockElement;
-  if (!el || !el.isConnected) return;
-  const designModes = ['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'];
-  if (!designModes.includes(state.mode)) return;
-  const target = e.target;
-  if (el === target || el.contains(target)) {
-    e.stopPropagation();
-    e.preventDefault();
-  }
+// Block ALL mouse/pointer events from reaching page elements during design mode.
+// This keeps cascading menus open because the page never sees the cursor leave.
+// The overlay stays pointer-events:none so the browser keeps CSS :hover on page elements.
+function blockPageEventInDesignMode(e) {
+  if (!isDesignMode()) return;
+  // Allow events that target our own overlay or its children (canvas, hint, ghost cursor)
+  if (state.overlay && (e.target === state.overlay || state.overlay.contains(e.target))) return;
+  e.stopPropagation();
+  e.preventDefault();
 }
 
 function setMode(newMode) {
@@ -174,28 +178,23 @@ function setMode(newMode) {
     }
     state.pathWaypoints = [];
     state.pathPreviewCursor = null;
-    clearMenuLock();
+    // Restore normal cursor
+    document.documentElement.style.cursor = '';
     if (state.overlay) {
-      state.overlay.style.pointerEvents = 'none';
-      state.overlay.style.cursor = 'default';
       state.overlay.querySelector('.design-mode-hint')?.remove();
     }
     hideGhostCursor();
-  } else if (['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'].includes(newMode)) {
+  } else if (DESIGN_MODES.includes(newMode)) {
     if (newMode === 'addPathKeepIn') state.pathConstraintType = 'keep-in';
     else if (newMode === 'addPathKeepOut') state.pathConstraintType = 'keep-out';
     if (newMode !== 'addPathKeepIn' && newMode !== 'addPathKeepOut') {
       state.pathWaypoints = [];
       state.pathPreviewCursor = null;
     }
-    clearMenuLock();
-    const under = document.elementFromPoint(state.lastMouseX, state.lastMouseY);
-    if (under && under !== document.body && under.isConnected) {
-      state.menuLockElement = under;
-    }
     createOverlay();
-    state.overlay.style.pointerEvents = 'auto';
-    state.overlay.style.cursor = 'crosshair';
+    // Overlay stays pointer-events:none so CSS :hover is preserved on page elements.
+    // Set crosshair on <html> so it shows everywhere.
+    document.documentElement.style.cursor = 'crosshair';
     let hint = state.overlay.querySelector('.design-mode-hint');
     if (!hint) {
       hint = document.createElement('div');
@@ -207,9 +206,8 @@ function setMode(newMode) {
   } else if (newMode === 'replay') {
     state.pathWaypoints = [];
     state.pathPreviewCursor = null;
-    clearMenuLock();
+    document.documentElement.style.cursor = '';
     createOverlay();
-    state.overlay.style.pointerEvents = 'none';
     state.overlay.querySelector('.design-mode-hint')?.remove();
   }
 
@@ -667,12 +665,54 @@ function setTrajectory(trajectory) {
   chrome.runtime.sendMessage({ type: 'trajectoryLoaded', count: trajectory.length });
 }
 
+// Dispatch a full sequence of synthetic mouse/pointer events at (x, y).
+// Tracks the previous element so enter/leave pairs fire correctly for cascading menus etc.
+function dispatchCursorEvents(x, y) {
+  const currElement = document.elementFromPoint(x, y);
+  const prevElement = state.replayPrevElement;
+
+  const baseInit = { view: window, bubbles: true, cancelable: true, clientX: x, clientY: y };
+  // mouseenter/mouseleave: bubbles must be false per spec
+  const noBubbleInit = { view: window, bubbles: false, cancelable: true, clientX: x, clientY: y };
+
+  // Element changed → dispatch leave on old, enter on new
+  if (currElement !== prevElement) {
+    if (prevElement && prevElement.isConnected) {
+      prevElement.dispatchEvent(new PointerEvent('pointerout', baseInit));
+      prevElement.dispatchEvent(new PointerEvent('pointerleave', noBubbleInit));
+      prevElement.dispatchEvent(new MouseEvent('mouseout', baseInit));
+      prevElement.dispatchEvent(new MouseEvent('mouseleave', noBubbleInit));
+    }
+    if (currElement) {
+      currElement.dispatchEvent(new PointerEvent('pointerover', baseInit));
+      currElement.dispatchEvent(new PointerEvent('pointerenter', noBubbleInit));
+      currElement.dispatchEvent(new MouseEvent('mouseover', baseInit));
+      currElement.dispatchEvent(new MouseEvent('mouseenter', noBubbleInit));
+    }
+    state.replayPrevElement = currElement;
+  }
+
+  // Always dispatch move events on current element
+  if (currElement) {
+    currElement.dispatchEvent(new PointerEvent('pointermove', baseInit));
+    currElement.dispatchEvent(new MouseEvent('mousemove', baseInit));
+  }
+
+  // Optional: CDP Input.dispatchMouseEvent for CSS :hover
+  if (state.useDebugger) {
+    try {
+      chrome.runtime.sendMessage({ type: 'debuggerMouseMove', x, y });
+    } catch (_) {}
+  }
+}
+
 function startReplay() {
   if (state.trajectory.length === 0) return;
   
   state.isReplaying = true;
   state.currentTrajectoryIndex = 0;
   state.replayStartTime = Date.now();
+  state.replayPrevElement = null;
   
   const totalDuration = state.trajectory[state.trajectory.length - 1][2];
   
@@ -686,6 +726,7 @@ function startReplay() {
     if (elapsed >= totalDuration) {
       const last = state.trajectory[state.trajectory.length - 1];
       showGhostCursor(last[0], last[1]);
+      dispatchCursorEvents(last[0], last[1]);
       state.isReplaying = false;
       try {
         chrome.runtime.sendMessage({
@@ -712,18 +753,7 @@ function startReplay() {
     
     const [x, y] = state.trajectory[currentIndex];
     showGhostCursor(x, y);
-    
-    const element = document.elementFromPoint(x, y);
-    if (element) {
-      const mouseEvent = new MouseEvent('mouseover', {
-        view: window,
-        bubbles: true,
-        cancelable: true,
-        clientX: x,
-        clientY: y
-      });
-      element.dispatchEvent(mouseEvent);
-    }
+    dispatchCursorEvents(x, y);
     
     state.currentTrajectoryIndex = currentIndex;
     try {
@@ -743,8 +773,22 @@ function startReplay() {
 
 function stopReplay() {
   state.isReplaying = false;
+  // Dispatch leave events on the last element the cursor was over
+  if (state.replayPrevElement && state.replayPrevElement.isConnected) {
+    const init = { view: window, bubbles: false, cancelable: true, clientX: 0, clientY: 0 };
+    const initBubble = { view: window, bubbles: true, cancelable: true, clientX: 0, clientY: 0 };
+    state.replayPrevElement.dispatchEvent(new PointerEvent('pointerout', initBubble));
+    state.replayPrevElement.dispatchEvent(new PointerEvent('pointerleave', init));
+    state.replayPrevElement.dispatchEvent(new MouseEvent('mouseout', initBubble));
+    state.replayPrevElement.dispatchEvent(new MouseEvent('mouseleave', init));
+  }
+  state.replayPrevElement = null;
   hideGhostCursor();
-  chrome.runtime.sendMessage({ type: 'replayStopped' });
+  // Detach debugger if it was used
+  if (state.useDebugger) {
+    try { chrome.runtime.sendMessage({ type: 'debuggerDetach' }); } catch (_) {}
+  }
+  try { chrome.runtime.sendMessage({ type: 'replayStopped' }); } catch (_) {}
 }
 
 function seekToTime(time) {
@@ -767,43 +811,28 @@ function seekToTime(time) {
     const [x, y] = state.trajectory[targetIndex];
     showGhostCursor(x, y);
     state.currentTrajectoryIndex = targetIndex;
-    
-    // Trigger hover event at this position
-    const element = document.elementFromPoint(x, y);
-    if (element) {
-      const mouseEvent = new MouseEvent('mouseover', {
-        view: window,
-        bubbles: true,
-        cancelable: true,
-        clientX: x,
-        clientY: y
-      });
-      element.dispatchEvent(mouseEvent);
-    }
+    dispatchCursorEvents(x, y);
   }
 }
 
 // Event handlers – use capture so we get events before page elements
 document.addEventListener('mousedown', (e) => {
-  const px = e.clientX, py = e.clientY;
-  if (state.mode === 'addWaypoint') {
+  // Block all clicks from reaching page elements during design mode
+  if (isDesignMode()) {
     e.preventDefault();
     e.stopPropagation();
+  }
+  const px = e.clientX, py = e.clientY;
+  if (state.mode === 'addWaypoint') {
     addWaypoint(px, py);
   } else if (state.mode === 'moveWaypoint') {
     const idx = hitTestWaypoint(px, py);
     if (idx >= 0) {
-      e.preventDefault();
-      e.stopPropagation();
       state.draggingWaypointIndex = idx;
     }
   } else if (state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') {
-    e.preventDefault();
-    e.stopPropagation();
     startConstraint(px, py);
   } else if (state.mode === 'addPathKeepIn' || state.mode === 'addPathKeepOut') {
-    e.preventDefault();
-    e.stopPropagation();
     state.pathWaypoints.push({
       x: px / state.screenWidth,
       y: py / state.screenHeight,
@@ -814,8 +843,6 @@ document.addEventListener('mousedown', (e) => {
   } else if (state.mode === 'resizeConstraint') {
     const hit = hitTestConstraint(px, py);
     if (hit) {
-      e.preventDefault();
-      e.stopPropagation();
       const c = state.constraints[hit.index];
       state.resizingConstraintIndex = hit.index;
       state.resizingHandle = hit.handle;
@@ -834,31 +861,37 @@ document.addEventListener('mousedown', (e) => {
   }
 }, true);
 
-// Passive: track cursor position (used when entering design mode to capture menu element)
+// Passive: track cursor position (used for overlay rendering)
 document.addEventListener('mousemove', (e) => {
   state.lastMouseX = e.clientX;
   state.lastMouseY = e.clientY;
 }, { capture: true, passive: true });
 
-// Hover lock: block leave events so the menu under cursor when entering design mode stays open
-document.addEventListener('mouseleave', blockLeaveIfMenuLock, true);
-document.addEventListener('mouseout', blockLeaveIfMenuLock, true);
-document.addEventListener('pointerleave', blockLeaveIfMenuLock, true);
-document.addEventListener('pointerout', blockLeaveIfMenuLock, true);
+// Block all mouse/pointer events from reaching page elements during design mode.
+// This preserves cascading menus, tooltips, etc. while designing.
+// Note: pointerdown/pointerup are NOT blocked here because preventDefault() on
+// pointerdown suppresses mousedown generation, which our design tools rely on.
+// mousedown/mouseup are blocked in their own capture handlers above.
+// click/auxclick/dblclick are blocked to prevent link navigation etc.
+['mouseover', 'mouseout', 'mouseenter', 'mouseleave',
+ 'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
+ 'pointermove',
+ 'click', 'auxclick', 'dblclick'].forEach(evtName => {
+  document.addEventListener(evtName, blockPageEventInDesignMode, true);
+});
 
 document.addEventListener('mousemove', (e) => {
   const px = e.clientX, py = e.clientY;
-  if (state.draggingWaypointIndex !== null) {
+  // Block mousemove from reaching page elements during design mode
+  if (isDesignMode()) {
     e.preventDefault();
     e.stopPropagation();
+  }
+  if (state.draggingWaypointIndex !== null) {
     updateWaypointPosition(state.draggingWaypointIndex, px, py);
   } else if ((state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') && state.constraintStart) {
-    e.preventDefault();
-    e.stopPropagation();
     updateConstraint(px, py);
   } else if (state.resizingConstraintIndex !== null && state.resizeStart) {
-    e.preventDefault();
-    e.stopPropagation();
     const c = state.constraints[state.resizingConstraintIndex];
     if (c.type === 'path') {
       applyResizePath(state.resizingConstraintIndex, state.resizingHandle, state.resizeStart, px, py);
@@ -875,9 +908,11 @@ document.addEventListener('mousemove', (e) => {
 }, true);
 
 document.addEventListener('mouseup', (e) => {
-  if ((state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') && state.constraintStart) {
+  if (isDesignMode()) {
     e.preventDefault();
     e.stopPropagation();
+  }
+  if ((state.mode === 'addRectKeepIn' || state.mode === 'addRectKeepOut') && state.constraintStart) {
     const constraintType = state.mode === 'addRectKeepOut' ? 'keep-out' : 'keep-in';
     finishConstraint(e.clientX, e.clientY, constraintType);
   } else if (state.draggingWaypointIndex !== null) {
@@ -1005,6 +1040,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case 'seekToTime':
       seekToTime(message.time);
+      sendResponse({ success: true });
+      break;
+    case 'setUseDebugger':
+      state.useDebugger = !!message.enabled;
       sendResponse({ success: true });
       break;
     default:
