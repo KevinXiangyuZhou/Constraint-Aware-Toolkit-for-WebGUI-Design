@@ -1,0 +1,15 @@
+{
+  "_description": "Novice computer user — slow, cautious, compensates with careful smooth movements",
+  "Tp": 0.05,
+  "Th": 0.2,
+  "nc": [0.25, 0.05],
+  "forearm": 0.34,
+  "planner_weights": {
+    "jerk": 2.0e-06,
+    "progress": 0.05e-06,
+    "wall": 80,
+    "contour": 30,
+    "lag": 0.02,
+    "desired_speed": 0.08
+  }
+}

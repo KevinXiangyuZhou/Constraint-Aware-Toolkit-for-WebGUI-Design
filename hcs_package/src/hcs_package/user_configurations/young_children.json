@@ -1,0 +1,15 @@
+{
+  "_description": "Young children user — slow, imprecise, underdeveloped motor control, high noise",
+  "Tp": 0.05,
+  "Th": 0.15,
+  "nc": [0.35, 0.08],
+  "forearm": 0.22,
+  "planner_weights": {
+    "jerk": 0.5e-06,
+    "progress": 0.03e-06,
+    "wall": 30,
+    "contour": 10,
+    "lag": 0.02,
+    "desired_speed": 0.06
+  }
+}

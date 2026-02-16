@@ -1,0 +1,18 @@
+{
+  "_description": "Default values — average speed and precision",
+  "Tp": 0.05,
+  "Th": 0.3,
+  "nc": [
+      0.2,
+      0.02
+  ],
+  "forearm": 0.357,
+  "planner_weights": {
+      "jerk": 1.2e-06,
+      "progress": 0.1e-06,
+      "wall": 50,
+      "contour": 20,
+      "lag": 0.05,
+      "desired_speed": 0.2
+  }
+}

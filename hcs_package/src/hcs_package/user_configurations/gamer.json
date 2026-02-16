@@ -1,0 +1,15 @@
+{
+  "_description": "Gamer / Power user — fast, precise, long planning horizon, low noise",
+  "Tp": 0.05,
+  "Th": 0.4,
+  "nc": [0.10, 0.01],
+  "forearm": 0.36,
+  "planner_weights": {
+    "jerk": 0.5e-06,
+    "progress": 0.5e-06,
+    "wall": 40,
+    "contour": 15,
+    "lag": 0.10,
+    "desired_speed": 0.35
+  }
+}

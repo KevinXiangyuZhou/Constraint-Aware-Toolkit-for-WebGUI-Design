@@ -30,85 +30,94 @@ class CursorSimulator:
     that can be used with Playwright's mouse movement functions.
     
     Example:
-        >>> simulator = CursorSimulator()
-        >>> trajectory = simulator.generate_trajectory(
-        ...     start=(100, 200),
-        ...     end=(500, 400),
-        ...     screen_width=1920,
-        ...     screen_height=1080
-        ... )
-        >>> # Use trajectory with Playwright
+        >>> simulator = CursorSimulator()                          # default: office_worker
+        >>> simulator = CursorSimulator("gamer")                   # built-in persona name
+        >>> simulator = CursorSimulator("/path/to/custom.json")    # custom config file
+        >>> trajectory = simulator.generate_trajectory_with_waypoints(task_file="task.json")
         >>> for x, y, delay in trajectory:
         ...     page.mouse.move(x, y)
         ...     await page.wait_for_timeout(int(delay * 1000))
+    
+    Available built-in personas:
+        office_worker, novice, gamer, young_children, fatigued, motor_impaired
     """
     
-    def __init__(self):
+    # Directory containing built-in user configuration files
+    _CONFIG_DIR = Path(__file__).parent / "user_configurations"
+    
+    def __init__(self, user_config: Optional[Union[str, Path]] = None):
         """
         Initialize the cursor simulator.
+        
+        Args:
+            user_config: User persona configuration. Can be:
+                - None: uses "office_worker" (default)
+                - A built-in persona name: "office_worker", "novice", "gamer",
+                  "young_children", "fatigued", "motor_impaired"
+                - A path to a custom JSON configuration file
         """
-        # Default configuration (always exists)
+        # Base defaults (always present, persona config overrides these)
         config = {
             "Interval": 0.05,
             "Tp": 0.05,
             "Th": 0.3,
-            "nc": [
-                0.2,
-                0.02
-            ],
+            "nc": [0.2, 0.02],
             "forearm": 0.357,
             "mouseGain": 1,
             "planner_weights": {
-                "jerk": 1.2270221915240491e-06,
-                "progress": 0.105984082449737e-06,
-                "wall": 200.36747657311221,
-                "contour": 20.8691506348653517,
-                "lag": 0.0580890071498787,
-                "desired_speed": 0.20841771264538897
+                "jerk": 1.2e-06,
+                "progress": 0.1e-06,
+                "wall": 50,
+                "contour": 20,
+                "lag": 0.05,
+                "desired_speed": 0.2
             },
-            "planner_margin": 0.005,
+            "planner_margin": 0.001,
             "add_noise": True,
             "ddm_enabled": False,
             "random_seed": 1000
         }
         
-        # Load configuration from file if provided and merge with defaults
-        # config = default_config.copy()
-        # if config_file is not None:
-        #     config_path = Path(config_file)
-        #     if not config_path.exists():
-        #         raise FileNotFoundError(f"Config file not found: {config_file}")
-        #     with open(config_path, 'r') as f:
-        #         file_config = json.load(f)
-        #         # Merge file config into defaults (file config overrides defaults)
-        #         config.update(file_config)
+        # Resolve persona config file
+        if user_config is None:
+            user_config = "office_worker"
         
-        # Set parameters from config (all keys guaranteed to exist)
+        config_path = Path(user_config)
+        
+        # If it's not an existing file path, treat it as a built-in persona name
+        if not config_path.exists():
+            builtin_path = self._CONFIG_DIR / f"{user_config}.json"
+            if builtin_path.exists():
+                config_path = builtin_path
+            else:
+                available = [f.stem for f in self._CONFIG_DIR.glob("*.json")]
+                raise FileNotFoundError(
+                    f"User config not found: '{user_config}'. "
+                    f"Available built-in personas: {available}"
+                )
+        
+        # Load and merge persona config
+        with open(config_path, 'r') as f:
+            user_cfg = json.load(f)
+        
+        # Deep-merge planner_weights (so partial overrides work)
+        if 'planner_weights' in user_cfg:
+            config['planner_weights'].update(user_cfg.pop('planner_weights'))
+        config.update(user_cfg)
+        
+        # Set parameters from config
         self.interval = config['Interval']
         self.forearm = config['forearm']
         
-        # Convert time horizons to steps if needed
+        # Convert Th (seconds) to prediction horizon (steps)
         th = config['Th']
-        if isinstance(th, (int, float)) and th > 1.0:
-            # Likely in seconds, convert to steps
-            self.pred_horizon = int(th / self.interval)
-        else:
-            self.pred_horizon = int(th) if isinstance(th, int) else 10
+        self.pred_horizon = max(1, int(round(th / self.interval)))
         
-        # Motor noise coefficients
-        nc_config = config['nc']
-        self.nc = list(nc_config) if isinstance(nc_config, list) else [0.05, 0.05]
-        
-        # Planner weights
+        self.nc = list(config['nc'])
         self.planner_weights = config['planner_weights']
-        
-        # Planner margin
         self.planner_margin = config['planner_margin']
-        
-        # Noise switch
         self.add_noise = config['add_noise']
         
-        # Random seed
         seed = config['random_seed']
         if seed is not None:
             np.random.seed(seed)
