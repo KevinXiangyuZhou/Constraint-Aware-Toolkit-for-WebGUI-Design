@@ -30,7 +30,10 @@ const state = {
   resizingConstraintIndex: null,
   resizingHandle: null,
   resizeStart: null,
-  // Undo/redo: history of added items (last = most recent)
+  // Ordered items (waypoints + constraints in creation order)
+  items: [],
+  nextItemId: 1,
+  // Undo/redo
   undoStack: [],
   redoStack: [],
   // Cursor position (capture element before overlay when entering design mode)
@@ -47,6 +50,44 @@ const state = {
   // Replay: use chrome.debugger API for CSS :hover
   useDebugger: true
 };
+
+// Generate unique item IDs
+function generateItemId() {
+  return 'item-' + (state.nextItemId++);
+}
+
+// Rebuild waypoints/constraints arrays from items list
+function syncStateFromItems() {
+  state.waypoints = [];
+  state.constraints = [];
+  for (const item of state.items) {
+    if (item.type === 'waypoint') {
+      item.data.pixelX = item.data.x * state.screenWidth;
+      item.data.pixelY = item.data.y * state.screenHeight;
+      state.waypoints.push(item.data);
+    } else if (item.type === 'constraint') {
+      item.data._enabled = item.enabled !== false;
+      state.constraints.push(item.data);
+    }
+  }
+}
+
+// Notify side panel about items change
+function notifyItemsChanged() {
+  try {
+    const cleanItems = state.items.map(i => {
+      const copy = { id: i.id, type: i.type, enabled: i.enabled, data: { ...i.data } };
+      delete copy.data._enabled;
+      return copy;
+    });
+    chrome.runtime.sendMessage({
+      type: 'itemsChanged',
+      items: cleanItems,
+      waypointCount: state.waypoints.length,
+      constraintCount: state.constraints.filter(c => c._enabled !== false).length
+    });
+  } catch (_) {}
+}
 
 // Initialize overlay canvas
 function createOverlay() {
@@ -115,9 +156,9 @@ function removeOverlay() {
 const MODE_HINTS = {
   addWaypoint: 'Hold Q — click to add waypoints. Release Q to exit.',
   moveWaypoint: 'Hold W — drag a waypoint to move it. Release W to exit.',
-  addRectKeepIn: 'Hold S — drag to draw a keep-in area (green). Release S to exit.',
+  addRectKeepIn: 'Hold S — drag to draw a keep-in area (blue). Release S to exit.',
   addRectKeepOut: 'Hold F — drag to draw a keep-out area (red). Release F to exit.',
-  addPathKeepIn: 'Hold D — click to add path points; release D to finish corridor (green).',
+  addPathKeepIn: 'Hold D — click to add path points; release D to finish corridor (blue).',
   addPathKeepOut: 'Hold G — click to add path points; release G to finish corridor (red).',
   resizeConstraint: 'Hold A — drag constraint edge to resize. Release A to exit.',
   passthrough: '',
@@ -140,14 +181,18 @@ function finalizePathConstraint() {
     width: state.pathDefaultWidth,
     constraintType: state.pathConstraintType || 'keep-in'
   };
-  state.constraints.push(pathConstraint);
-  state.undoStack.push({ type: 'constraint', data: { ...pathConstraint } });
+  const item = { id: generateItemId(), type: 'constraint', data: pathConstraint, enabled: true };
+  state.items.push(item);
+  syncStateFromItems();
+  state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
   state.redoStack = [];
+  renderOverlay();
   try {
     chrome.runtime.sendMessage({
-      type: 'constraintAdded',
-      constraint: pathConstraint,
-      count: state.constraints.length
+      type: 'itemAdded',
+      item: { id: item.id, type: 'constraint', data: pathConstraint, enabled: true },
+      waypointCount: state.waypoints.length,
+      constraintCount: state.constraints.length
     });
   } catch (_) {}
 }
@@ -225,22 +270,27 @@ function addWaypoint(x, y) {
     pixelX: x,
     pixelY: y
   };
-  state.waypoints.push(normalized);
-  state.undoStack.push({ type: 'waypoint', data: { ...normalized } });
+  const item = { id: generateItemId(), type: 'waypoint', data: normalized, enabled: true };
+  state.items.push(item);
+  syncStateFromItems();
+  state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
   state.redoStack = [];
   renderOverlay();
   try {
     chrome.runtime.sendMessage({
-      type: 'waypointAdded',
-      waypoint: normalized,
-      count: state.waypoints.length
+      type: 'itemAdded',
+      item: { id: item.id, type: 'waypoint', data: normalized, enabled: true },
+      waypointCount: state.waypoints.length,
+      constraintCount: state.constraints.length
     });
   } catch (_) {}
 }
 
 function clearWaypoints() {
-  state.waypoints = [];
+  state.items = state.items.filter(i => i.type !== 'waypoint');
+  syncStateFromItems();
   renderOverlay();
+  notifyItemsChanged();
   try { chrome.runtime.sendMessage({ type: 'waypointsCleared' }); } catch (_) {}
 }
 
@@ -278,24 +328,29 @@ function finishConstraint(x, y, constraintType = 'keep-in') {
     constraintType: constraintType
   };
   
-  state.constraints.push(normalized);
-  state.undoStack.push({ type: 'constraint', data: { ...normalized } });
+  const item = { id: generateItemId(), type: 'constraint', data: normalized, enabled: true };
+  state.items.push(item);
+  syncStateFromItems();
+  state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
   state.redoStack = [];
   state.constraintStart = null;
   state.constraintCurrent = null;
   renderOverlay();
   try {
     chrome.runtime.sendMessage({
-      type: 'constraintAdded',
-      constraint: normalized,
-      count: state.constraints.length
+      type: 'itemAdded',
+      item: { id: item.id, type: 'constraint', data: normalized, enabled: true },
+      waypointCount: state.waypoints.length,
+      constraintCount: state.constraints.length
     });
   } catch (_) {}
 }
 
 function clearConstraints() {
-  state.constraints = [];
+  state.items = state.items.filter(i => i.type !== 'constraint');
+  syncStateFromItems();
   renderOverlay();
+  notifyItemsChanged();
   try { chrome.runtime.sendMessage({ type: 'constraintsCleared' }); } catch (_) {}
 }
 
@@ -407,17 +462,17 @@ function applyResizePath(index, handle, start, currentPx, currentPy) {
   renderOverlay();
 }
 
-// Undo: remove last added waypoint or constraint
 function undo() {
   if (state.undoStack.length === 0) return false;
   const action = state.undoStack.pop();
   state.redoStack.push(action);
-  if (action.type === 'waypoint') {
-    state.waypoints.pop();
-  } else if (action.type === 'constraint') {
-    state.constraints.pop();
+  const idx = state.items.findIndex(i => i.id === action.itemId);
+  if (idx >= 0) {
+    state.items.splice(idx, 1);
   }
+  syncStateFromItems();
   renderOverlay();
+  notifyItemsChanged();
   notifyUndoRedo(true, false);
   return true;
 }
@@ -426,26 +481,26 @@ function redo() {
   if (state.redoStack.length === 0) return false;
   const action = state.redoStack.pop();
   state.undoStack.push(action);
-  if (action.type === 'waypoint') {
-    state.waypoints.push(action.data);
-  } else if (action.type === 'constraint') {
-    state.constraints.push(action.data);
+  if (action.itemCopy) {
+    state.items.push(JSON.parse(JSON.stringify(action.itemCopy)));
+    syncStateFromItems();
   }
   renderOverlay();
+  notifyItemsChanged();
   notifyUndoRedo(false, true);
   return true;
 }
 
-function notifyUndoRedo(undo, redo) {
+function notifyUndoRedo(undone, redone) {
   try {
     chrome.runtime.sendMessage({
       type: 'undoRedoState',
       waypointCount: state.waypoints.length,
-      constraintCount: state.constraints.length,
+      constraintCount: state.constraints.filter(c => c._enabled !== false).length,
       canUndo: state.undoStack.length > 0,
       canRedo: state.redoStack.length > 0,
-      undo,
-      redo
+      undo: undone,
+      redo: redone
     });
   } catch (_) {}
 }
@@ -562,8 +617,10 @@ function renderOverlay() {
   
   // Draw constraints
   state.constraints.forEach((constraint) => {
-    ctx.strokeStyle = constraint.constraintType === 'keep-in' ? '#10b981' : '#ef4444';
-    ctx.fillStyle = constraint.constraintType === 'keep-in' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+    const isDisabled = constraint._enabled === false;
+    if (isDisabled) ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = constraint.constraintType === 'keep-in' ? '#3b82f6' : '#ef4444';
+    ctx.fillStyle = constraint.constraintType === 'keep-in' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(239, 68, 68, 0.15)';
     ctx.setLineDash([5, 5]);
     ctx.lineWidth = 2;
     if (constraint.type === 'path' && constraint.path && constraint.path.length >= 2) {
@@ -571,7 +628,7 @@ function renderOverlay() {
       const pathPx = constraint.path.map(([nx, ny]) => [nx * state.screenWidth, ny * state.screenHeight]);
       drawCorridorPolygon(ctx, pathPx, halfW);
       ctx.setLineDash([]);
-      const dotColor = constraint.constraintType === 'keep-out' ? '#ef4444' : '#10b981';
+      const dotColor = constraint.constraintType === 'keep-out' ? '#ef4444' : '#3b82f6';
       constraint.path.forEach(([nx, ny]) => {
         const px = nx * state.screenWidth, py = ny * state.screenHeight;
         ctx.fillStyle = dotColor;
@@ -591,6 +648,7 @@ function renderOverlay() {
       ctx.strokeRect(x, y, width, height);
       ctx.setLineDash([]);
     }
+    if (isDisabled) ctx.globalAlpha = 1.0;
   });
   
   // Draw path constraint preview (rubber-band + connected corridor)
@@ -598,8 +656,8 @@ function renderOverlay() {
     const pts = state.pathWaypoints;
     const halfW = (state.pathDefaultWidth * state.screenWidth) / 2;
     const isKeepOut = state.pathConstraintType === 'keep-out';
-    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#10b981';
-    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#3b82f6';
+    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)';
     ctx.setLineDash([3, 3]);
     ctx.lineWidth = 2;
     const pathPx = pts.map((p) => ({ x: p.pixelX, y: p.pixelY }));
@@ -616,7 +674,7 @@ function renderOverlay() {
     }
     ctx.setLineDash([]);
     pts.forEach((p) => {
-      ctx.fillStyle = isKeepOut ? '#ef4444' : '#10b981';
+      ctx.fillStyle = isKeepOut ? '#ef4444' : '#3b82f6';
       ctx.beginPath();
       ctx.arc(p.pixelX, p.pixelY, 5, 0, Math.PI * 2);
       ctx.fill();
@@ -635,8 +693,8 @@ function renderOverlay() {
     const width = Math.abs(current.x - start.x);
     const height = Math.abs(current.y - start.y);
     const isKeepOut = state.mode === 'addRectKeepOut';
-    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#10b981';
-    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)';
+    ctx.strokeStyle = isKeepOut ? '#ef4444' : '#3b82f6';
+    ctx.fillStyle = isKeepOut ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.1)';
     ctx.setLineDash([5, 5]);
     ctx.lineWidth = 2;
     ctx.fillRect(x, y, width, height);
@@ -995,16 +1053,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
     case 'clearAll':
+      state.items = [];
       state.undoStack = [];
       state.redoStack = [];
-      clearWaypoints();
-      clearConstraints();
+      syncStateFromItems();
+      renderOverlay();
+      notifyItemsChanged();
+      try {
+        chrome.runtime.sendMessage({ type: 'waypointsCleared' });
+        chrome.runtime.sendMessage({ type: 'constraintsCleared' });
+      } catch (_) {}
       sendResponse({ success: true });
       break;
     case 'getState':
       sendResponse({
         waypoints: state.waypoints,
         constraints: state.constraints,
+        items: state.items.map(i => {
+          const copy = { id: i.id, type: i.type, enabled: i.enabled, data: { ...i.data } };
+          delete copy.data._enabled;
+          return copy;
+        }),
+        undoStack: state.undoStack,
+        redoStack: state.redoStack,
         mode: state.mode,
         trajectoryCount: state.trajectory.length,
         screenWidth: state.screenWidth,
@@ -1046,6 +1117,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.useDebugger = !!message.enabled;
       sendResponse({ success: true });
       break;
+    case 'loadTaskState': {
+      state.items = (message.items || []).map(i => ({
+        id: i.id,
+        type: i.type,
+        data: { ...i.data },
+        enabled: i.enabled !== false
+      }));
+      state.undoStack = message.undoStack || [];
+      state.redoStack = message.redoStack || [];
+      const maxId = state.items.reduce((max, i) => {
+        const num = parseInt(i.id.replace('item-', ''), 10);
+        return isNaN(num) ? max : Math.max(max, num + 1);
+      }, state.nextItemId);
+      state.nextItemId = maxId;
+      syncStateFromItems();
+      renderOverlay();
+      sendResponse({ success: true });
+      break;
+    }
+    case 'deleteItem': {
+      const delIdx = state.items.findIndex(i => i.id === message.itemId);
+      if (delIdx >= 0) {
+        state.items.splice(delIdx, 1);
+        state.undoStack = state.undoStack.filter(a => a.itemId !== message.itemId);
+        state.redoStack = state.redoStack.filter(a => a.itemId !== message.itemId);
+        syncStateFromItems();
+        renderOverlay();
+        notifyUndoRedo(false, false);
+      }
+      sendResponse({ success: delIdx >= 0 });
+      break;
+    }
+    case 'reorderItems': {
+      const orderMap = {};
+      state.items.forEach(i => { orderMap[i.id] = i; });
+      state.items = (message.itemIds || []).map(id => orderMap[id]).filter(Boolean);
+      syncStateFromItems();
+      renderOverlay();
+      sendResponse({ success: true });
+      break;
+    }
+    case 'toggleConstraintEnabled': {
+      const toggleItem = state.items.find(i => i.id === message.itemId);
+      if (toggleItem && toggleItem.type === 'constraint') {
+        toggleItem.enabled = !!message.enabled;
+        syncStateFromItems();
+        renderOverlay();
+      }
+      sendResponse({ success: !!toggleItem });
+      break;
+    }
     default:
       sendResponse({ success: false, error: 'Unknown message type' });
   }

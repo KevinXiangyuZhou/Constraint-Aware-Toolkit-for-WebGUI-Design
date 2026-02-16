@@ -53,9 +53,9 @@ You can test it by visiting:
 3. **Design Mode** (hold key to enter mode; release to exit):
    - **Q** – Add waypoint: click on the page to add waypoints (blue dots)
    - **W** – Move waypoint: drag a waypoint to move it
-   - **S** – Rectangle keep-in: drag to draw a green constraint zone
+   - **S** – Rectangle keep-in: drag to draw a blue constraint zone
    - **D** – Rectangle keep-out: drag to draw a red constraint zone
-   - **F** – Path keep-in: click to add path points; release F to finalize green corridor
+   - **F** – Path keep-in: click to add path points; release F to finalize blue corridor
    - **G** – Path keep-out: click to add path points; release G to finalize red corridor
    - **A** – Resize: drag the edge of a constraint area to resize
    - **Esc** – Passthrough (quit design mode)

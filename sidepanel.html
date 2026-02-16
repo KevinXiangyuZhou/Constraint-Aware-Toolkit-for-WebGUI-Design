@@ -148,7 +148,7 @@
       min-height: 1px;
     }
     
-    .tool-btn-keepin .icon { background: rgba(34, 197, 94, 0.12); }
+    .tool-btn-keepin .icon { background: rgba(59, 130, 246, 0.12); }
     .tool-btn-keepout .icon { background: rgba(239, 68, 68, 0.12); }
     .tool-btn-accent .icon { background: rgba(96, 165, 250, 0.12); }
     .tool-btn-danger .icon { background: rgba(239, 68, 68, 0.12); }
@@ -433,6 +433,216 @@
       font-size: 12px;
       color: #a3a3a3;
     }
+    /* Tasks panel */
+    .tasks-panel {
+      margin-bottom: 20px;
+    }
+    .tasks-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .tasks-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e5e5e5;
+      letter-spacing: 0.02em;
+    }
+    .tasks-add-btn {
+      background: none;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      color: #a3a3a3;
+      cursor: pointer;
+      padding: 2px 10px;
+      font-size: 16px;
+      line-height: 1.2;
+      transition: background 0.2s, color 0.2s;
+    }
+    .tasks-add-btn:hover {
+      background: #363636;
+      color: #e5e5e5;
+    }
+    .tasks-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .task-item {
+      background: #2d2d2d;
+      border: 1px solid #404040;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .task-item.active {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.3);
+    }
+    .task-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .task-header:hover {
+      background: #363636;
+    }
+    .task-expand-icon {
+      font-size: 10px;
+      color: #737373;
+      width: 14px;
+      text-align: center;
+      flex-shrink: 0;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+    .task-expand-icon.expanded {
+      transform: rotate(90deg);
+    }
+    .task-name {
+      flex: 1;
+      font-size: 13px;
+      color: #e5e5e5;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-name-input {
+      flex: 1;
+      font-size: 13px;
+      color: #e5e5e5;
+      font-weight: 500;
+      background: #1e1e1e;
+      border: 1px solid #60a5fa;
+      border-radius: 4px;
+      padding: 2px 6px;
+      outline: none;
+      font-family: inherit;
+    }
+    .task-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .task-header:hover .task-actions {
+      opacity: 1;
+    }
+    .task-action-btn {
+      background: none;
+      border: none;
+      color: #737373;
+      cursor: pointer;
+      padding: 2px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, background 0.15s;
+    }
+    .task-action-btn:hover {
+      color: #e5e5e5;
+      background: rgba(255,255,255,0.08);
+    }
+    .task-action-btn.delete-btn:hover {
+      color: #fca5a5;
+    }
+    .task-body {
+      border-top: 1px solid #404040;
+    }
+    .task-items-list {
+      padding: 4px 0;
+    }
+    .task-empty-msg {
+      font-size: 11px;
+      color: #737373;
+      padding: 8px 16px;
+      text-align: center;
+      font-style: italic;
+    }
+    .task-item-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px 4px 16px;
+      font-size: 12px;
+      color: #e5e5e5;
+      cursor: default;
+      transition: background 0.1s;
+    }
+    .task-item-row:hover {
+      background: rgba(255,255,255,0.04);
+    }
+    .task-item-row.dragging {
+      opacity: 0.4;
+    }
+    .task-item-row.drag-over {
+      border-top: 2px solid #60a5fa;
+      margin-top: -2px;
+    }
+    .drag-handle {
+      cursor: grab;
+      color: #525252;
+      font-size: 14px;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+    .item-icon {
+      flex-shrink: 0;
+      font-size: 10px;
+      width: 16px;
+      text-align: center;
+    }
+    .item-icon.waypoint-icon {
+      color: #3b82f6;
+    }
+    .item-icon.constraint-icon {
+      color: #3b82f6;
+    }
+    .item-icon.constraint-icon.keep-out {
+      color: #ef4444;
+    }
+    .item-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+    .item-toggle-wrap {
+      flex-shrink: 0;
+    }
+    .item-toggle-wrap input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      accent-color: #60a5fa;
+    }
+    .item-action-btn {
+      background: none;
+      border: none;
+      color: #525252;
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 14px;
+      line-height: 1;
+      border-radius: 3px;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s;
+    }
+    .task-item-row:hover .item-action-btn {
+      opacity: 1;
+    }
+    .item-action-btn:hover {
+      color: #fca5a5;
+    }
   </style>
 </head>
 <body>
@@ -447,7 +657,7 @@
     <div id="mode-hint" class="mode-hint">Design mode off — use the page normally.</div>
     
     <div class="palette-section">
-      <div class="palette-section-title">Waypoint Management</div>
+      <div class="palette-section-title">Actions</div>
       <div class="tool-grid">
         <button type="button" id="btn-add-waypoint" class="tool-btn" title="Add waypoint (Q)">
           <span class="icon icon-square"><i data-lucide="waypoints"></i></span>
@@ -464,7 +674,7 @@
     </div>
     
     <div class="palette-section">
-      <div class="palette-section-title">Constraints Management</div>
+      <div class="palette-section-title">Constraints</div>
       <div class="tool-grid">
         <button type="button" id="btn-rect-keep-in" class="tool-btn tool-btn-keepin" title="Area keep-in (S)">
           <span class="icon icon-square"><i data-lucide="square"></i></span>
@@ -528,9 +738,17 @@
       </div>
     </div>
   </div>
+
+  <div class="tasks-panel">
+    <div class="tasks-header">
+      <span class="tasks-title">Edit Tasks</span>
+      <button type="button" id="btn-add-task" class="tasks-add-btn" title="Create new task">+</button>
+    </div>
+    <div id="tasks-list" class="tasks-list"></div>
+  </div>
   
   <div class="section">
-    <div class="section-title">Actions</div>
+    <div class="section-title">Simulations</div>
     <div class="button-group">
       <button id="btn-simulate" class="btn-primary">Run Simulation</button>
     </div>
