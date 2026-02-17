@@ -5,8 +5,10 @@ Handles simulation requests from the Chrome Extension and interfaces with hcs_pa
 """
 
 import json
+import copy
 import tempfile
 import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
@@ -15,6 +17,9 @@ from pydantic import BaseModel
 
 # Import hcs_package
 from hcs_package import CursorSimulator
+
+logger = logging.getLogger("cursor-sim")
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Cursor Trajectory Simulator API")
 
@@ -54,6 +59,7 @@ class Viewport(BaseModel):
 class SimulateRequest(BaseModel):
     task: TaskConfig
     user_config: Optional[Dict[str, Any]] = None
+    random_seed: Optional[int] = None
     cookies: Optional[List[Cookie]] = None
     viewport: Viewport
     url: Optional[str] = None
@@ -120,16 +126,26 @@ async def simulate(request: SimulateRequest):
             json.dump(task_data, f, indent=2)
             temp_task_file = f.name
         
-        # Write user config to temp file if provided
+        # Build user config: deep-copy to avoid mutating the request object
         temp_user_config_file = None
-        if request.user_config:
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                suffix='.json',
-                delete=False
-            ) as uf:
-                json.dump(request.user_config, uf, indent=2)
-                temp_user_config_file = uf.name
+        user_cfg = copy.deepcopy(request.user_config) if request.user_config else {}
+        if request.random_seed is not None:
+            user_cfg["random_seed"] = request.random_seed
+        
+        # Write config file so the simulator gets explicit persona parameters
+        if user_cfg:
+            fd, temp_user_config_file = tempfile.mkstemp(suffix='.json')
+            with os.fdopen(fd, 'w') as uf:
+                json.dump(user_cfg, uf)
+            
+            # Log key parameters for debugging
+            pw = user_cfg.get("planner_weights", {})
+            logger.info(
+                "Sim config: seed=%s Th=%s nc=%s forearm=%s desired_speed=%s jerk=%s wall=%s contour=%s",
+                user_cfg.get("random_seed"), user_cfg.get("Th"), user_cfg.get("nc"),
+                user_cfg.get("forearm"), pw.get("desired_speed"), pw.get("jerk"),
+                pw.get("wall"), pw.get("contour")
+            )
 
         try:
             # Initialize simulator with persona config (or default)

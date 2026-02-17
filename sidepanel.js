@@ -8,9 +8,6 @@ if (typeof lucide !== 'undefined') {
 let currentMode = 'passthrough';
 let waypointCount = 0;
 let constraintCount = 0;
-let trajectoryCount = 0;
-let currentTrajectory = [];
-let totalDuration = 0;
 let isReplaying = false;
 let screenWidth = 1920; // fallback for corridor width px <-> normalized
 
@@ -32,24 +29,14 @@ const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
 const btnSimulate = document.getElementById('btn-simulate');
 const btnClear = document.getElementById('btn-clear');
-const btnReplay = document.getElementById('btn-replay');
-const btnStop = document.getElementById('btn-stop');
 const statusDiv = document.getElementById('status');
 const waypointCountSpan = document.getElementById('waypoint-count');
 const constraintCountSpan = document.getElementById('constraint-count');
-const trajectoryCountSpan = document.getElementById('trajectory-count');
-const replaySection = document.getElementById('replay-section');
-const timeline = document.getElementById('timeline');
-const timelineProgress = document.getElementById('timeline-progress');
-const timelineHandle = document.getElementById('timeline-handle');
-const timelineCurrent = document.getElementById('timeline-current');
-const timelineTotal = document.getElementById('timeline-total');
 const activeBadge = document.getElementById('active-badge');
 const modeHint = document.getElementById('mode-hint');
 const contextualSliderWrap = document.getElementById('contextual-slider-wrap');
 const corridorWidthSlider = document.getElementById('corridor-width-slider');
 const corridorWidthValue = document.getElementById('corridor-width-value');
-const toggleDebugger = document.getElementById('toggle-debugger');
 const btnAddTask = document.getElementById('btn-add-task');
 const tasksListEl = document.getElementById('tasks-list');
 const personaSelect = document.getElementById('persona-select');
@@ -405,6 +392,7 @@ function duplicateActivePersona() {
   personas.push(newP);
   selectPersona(newP.id);
   saveCustomPersonas();
+  renderExpChecks();
 }
 
 // Handle slider change: if active persona is builtin, auto-duplicate first
@@ -559,6 +547,7 @@ async function addNewTask() {
   } catch (_) {}
 
   renderTasksList();
+  renderExpChecks();
 }
 
 async function switchToTask(taskId) {
@@ -618,6 +607,7 @@ async function deleteTask(taskId) {
   }
 
   renderTasksList();
+  renderExpChecks();
 }
 
 function renameTask(taskId, newName) {
@@ -1022,13 +1012,6 @@ async function onCorridorWidthChange() {
 
 corridorWidthSlider.addEventListener('input', onCorridorWidthChange);
 
-// Debugger toggle
-toggleDebugger.addEventListener('change', async () => {
-  try {
-    await sendToContentScript({ type: 'setUseDebugger', enabled: toggleDebugger.checked });
-  } catch (_) {}
-});
-
 btnClear.addEventListener('click', async () => {
   if (confirm('Clear all waypoints and constraints?')) {
     try {
@@ -1054,142 +1037,434 @@ btnClear.addEventListener('click', async () => {
   }
 });
 
-btnSimulate.addEventListener('click', async () => {
-  if (waypointCount < 2) {
-    updateStatus('Need at least 2 waypoints to simulate', 'error');
-    return;
-  }
+// ====== Experiment Engine ======
 
-  updateStatus('Running simulation...', '');
-  btnSimulate.disabled = true;
+const expTasksChecks = document.getElementById('exp-tasks-checks');
+const expPersonasChecks = document.getElementById('exp-personas-checks');
+const expRunsInput = document.getElementById('exp-runs');
+const resultsSection = document.getElementById('results-section');
+const resultsTree = document.getElementById('results-tree');
 
-  try {
-    const st = await sendToContentScript({ type: 'getState' });
-    const tab = await getCurrentTab();
-    const cookies = await chrome.cookies.getAll({ url: tab.url });
-    const viewportWidth = st.screenWidth || tab.width || window.innerWidth || 1920;
-    const viewportHeight = st.screenHeight || tab.height || window.innerHeight || 1080;
+// Experiment results state
+let experimentResults = []; // array of { taskId, taskName, sims: [{ personaId, personaName, personaCfg, rounds: [{ seed, status, trajectory, duration, error }], expanded }], expanded }
+let playingRoundRef = null; // { taskIdx, simIdx, roundIdx } or null
+let experimentRunning = false;
 
-    // Only include enabled constraints
-    const enabledConstraints = st.constraints.filter(c => c._enabled !== false);
-
-    const taskConfig = {
-      waypoints: st.waypoints.map(wp => [wp.pixelX, wp.pixelY]),
-      screen_width: viewportWidth,
-      screen_height: viewportHeight,
-      constraints: {
-        coordinate_system: 'normalized',
-        default_margin: 0.005,
-        regions: enabledConstraints.map(c => {
-          const base = {
-            constraint_type: c.constraintType === 'keep-in' ? 'keep_in' : 'keep_out',
-            margin: 0.002,
-            enabled: true
-          };
-          if (c.type === 'path' && c.path) {
-            base.geometry = { type: 'path', path: c.path, width: c.width };
-          } else {
-            base.geometry = { type: c.type || 'rectangle', x: c.x, y: c.y, width: c.width, height: c.height };
-          }
-          return base;
-        })
-      }
-    };
-
-    // Build persona config for the server
-    const personaCfg = getActivePersonaConfig();
-
-    const response = await fetch('http://localhost:8000/api/simulate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task: taskConfig,
-        user_config: personaCfg,
-        cookies: cookies.map(c => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain,
-          path: c.path,
-          secure: c.secure,
-          httpOnly: c.httpOnly,
-          sameSite: c.sameSite
-        })),
-        viewport: { width: viewportWidth, height: viewportHeight },
-        url: tab.url
-      })
-    });
-
-    if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
-    const result = await response.json();
-
-    if (result.success && result.trajectory) {
-      currentTrajectory = result.trajectory;
-      trajectoryCount = currentTrajectory.length;
-      trajectoryCountSpan.textContent = trajectoryCount;
-      totalDuration = result.total_duration ?? (currentTrajectory.length > 0 ? currentTrajectory[currentTrajectory.length - 1][2] : 0);
-      timelineTotal.textContent = `${totalDuration.toFixed(2)}s`;
-      await sendToContentScript({ type: 'setTrajectory', trajectory: currentTrajectory });
-      replaySection.style.display = 'block';
-      updateStatus(`Simulation complete: ${trajectoryCount} points generated`, 'success');
-    } else {
-      throw new Error(result.error || 'Unknown error');
-    }
-  } catch (error) {
-    console.error('Simulation error:', error);
-    updateStatus(`Error: ${error.message}`, 'error');
-  } finally {
-    btnSimulate.disabled = false;
-  }
-});
-
-btnReplay.addEventListener('click', async () => {
-  if (currentTrajectory.length === 0) {
-    updateStatus('No trajectory to replay', 'error');
-    return;
-  }
-  timelineProgress.style.width = '0%';
-  timelineHandle.style.left = '0%';
-  timelineCurrent.textContent = '0.0s';
-  isReplaying = true;
-  btnReplay.disabled = true;
-  btnStop.disabled = false;
-  await sendToContentScript({ type: 'startReplay' });
-  updateStatus('Replaying trajectory...', '');
-});
-
-btnStop.addEventListener('click', async () => {
-  isReplaying = false;
-  btnReplay.disabled = false;
-  btnStop.disabled = true;
-  await sendToContentScript({ type: 'stopReplay' });
-  updateStatus('Replay stopped', '');
-});
-
-let isDragging = false;
-timeline.addEventListener('mousedown', (e) => {
-  if (currentTrajectory.length === 0) return;
-  isDragging = true;
-  updateTimelineFromEvent(e);
-});
-document.addEventListener('mousemove', (e) => {
-  if (isDragging) updateTimelineFromEvent(e);
-});
-document.addEventListener('mouseup', () => { if (isDragging) isDragging = false; });
-
-function updateTimelineFromEvent(e) {
-  const rect = timeline.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const progress = Math.max(0, Math.min(1, x / rect.width));
-  seekToTime(progress * totalDuration);
+// Deterministic seeding: produce unique seeds per (experiment, task, persona, round)
+function makeSeed(expSeed, taskIndex, personaIndex, roundIndex) {
+  // Simple deterministic formula that guarantees unique seeds for all combos
+  // Use prime multipliers to avoid collisions
+  return ((expSeed % 100000) * 1000000 + taskIndex * 10000 + personaIndex * 100 + roundIndex + 1) % 2147483647;
 }
 
-function seekToTime(time) {
-  if (currentTrajectory.length === 0) return;
-  const progress = totalDuration > 0 ? time / totalDuration : 0;
-  timelineProgress.style.width = `${progress * 100}%`;
-  timelineHandle.style.left = `${progress * 100}%`;
-  timelineCurrent.textContent = `${time.toFixed(2)}s`;
-  sendToContentScript({ type: 'seekToTime', time });
+// Render experiment checkboxes
+function renderExpChecks() {
+  expTasksChecks.innerHTML = '';
+  tasks.forEach(t => {
+    const label = document.createElement('label');
+    label.className = 'exp-check-item';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.taskId = t.id;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(t.name));
+    expTasksChecks.appendChild(label);
+  });
+
+  expPersonasChecks.innerHTML = '';
+  personas.forEach(p => {
+    const label = document.createElement('label');
+    label.className = 'exp-check-item';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = p.id === activePersonaId;
+    cb.dataset.personaId = p.id;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(p.name));
+    expPersonasChecks.appendChild(label);
+  });
+}
+
+// All / None selection buttons
+document.getElementById('exp-tasks-all').addEventListener('click', () => {
+  expTasksChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+});
+document.getElementById('exp-tasks-none').addEventListener('click', () => {
+  expTasksChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+});
+document.getElementById('exp-personas-all').addEventListener('click', () => {
+  expPersonasChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+});
+document.getElementById('exp-personas-none').addEventListener('click', () => {
+  expPersonasChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+});
+
+// Build task config from a task's saved items
+function buildTaskConfig(taskData, viewportW, viewportH) {
+  const waypoints = taskData.items.filter(i => i.type === 'waypoint');
+  const constraints = taskData.items.filter(i => i.type === 'constraint' && i.enabled !== false);
+  return {
+    waypoints: waypoints.map(w => [w.data.pixelX || w.data.x * viewportW, w.data.pixelY || w.data.y * viewportH]),
+    screen_width: viewportW,
+    screen_height: viewportH,
+    constraints: {
+      coordinate_system: 'normalized',
+      default_margin: 0.005,
+      regions: constraints.map(c => {
+        const d = c.data;
+        const base = {
+          constraint_type: d.constraintType === 'keep-in' ? 'keep_in' : 'keep_out',
+          margin: 0.002,
+          enabled: true
+        };
+        if (d.type === 'path' && d.path) {
+          base.geometry = { type: 'path', path: d.path, width: d.width };
+        } else {
+          base.geometry = { type: d.type || 'rectangle', x: d.x, y: d.y, width: d.width, height: d.height };
+        }
+        return base;
+      })
+    }
+  };
+}
+
+// Check trajectory for constraint violations.
+// Returns { violated: boolean, count: number } where count = number of trajectory points violating any constraint.
+function checkViolations(trajectory, taskConfig) {
+  if (!trajectory || !taskConfig.constraints?.regions) return { violated: false, count: 0 };
+  const W = taskConfig.screen_width;
+  const H = taskConfig.screen_height;
+  let count = 0;
+  for (const [px, py] of trajectory) {
+    const nx = px / W, ny = py / H;
+    for (const region of taskConfig.constraints.regions) {
+      const g = region.geometry;
+      if (!g) continue;
+      const inside = isInsideRegion(nx, ny, g);
+      if (region.constraint_type === 'keep_in' && !inside) { count++; break; }
+      if (region.constraint_type === 'keep_out' && inside) { count++; break; }
+    }
+  }
+  return { violated: count > 0, count };
+}
+
+function isInsideRegion(nx, ny, g) {
+  if (g.type === 'rectangle') {
+    return nx >= g.x && nx <= g.x + g.width && ny >= g.y && ny <= g.y + g.height;
+  }
+  if (g.type === 'path' && g.path && g.path.length >= 2) {
+    const halfW = (g.width || 0.02) / 2;
+    for (let i = 0; i < g.path.length - 1; i++) {
+      const [ax, ay] = g.path[i], [bx, by] = g.path[i + 1];
+      const dx = bx - ax, dy = by - ay;
+      const len = Math.hypot(dx, dy) || 1;
+      const t = Math.max(0, Math.min(1, ((nx - ax) * dx + (ny - ay) * dy) / (len * len)));
+      const projX = ax + t * dx, projY = ay + t * dy;
+      if (Math.hypot(nx - projX, ny - projY) <= halfW) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+// Run a single simulation call
+async function runSingleSim(taskConfig, personaCfg, seed, cookies, viewport, url) {
+  // Embed the seed directly into the persona config so it's guaranteed to reach the simulator
+  const cfgWithSeed = {
+    ...personaCfg,
+    random_seed: seed
+  };
+  const response = await fetch('http://localhost:8000/api/simulate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task: taskConfig,
+      user_config: cfgWithSeed,
+      random_seed: seed,
+      cookies,
+      viewport,
+      url
+    })
+  });
+  if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
+  return response.json();
+}
+
+// Main experiment runner
+btnSimulate.addEventListener('click', async () => {
+  // Collect selected tasks and personas
+  const selTaskIds = [...expTasksChecks.querySelectorAll('input:checked')].map(cb => cb.dataset.taskId);
+  const selPersonaIds = [...expPersonasChecks.querySelectorAll('input:checked')].map(cb => cb.dataset.personaId);
+  const runsPerConfig = Math.max(1, parseInt(expRunsInput.value) || 1);
+
+  if (selTaskIds.length === 0) { updateStatus('Select at least one task', 'error'); return; }
+  if (selPersonaIds.length === 0) { updateStatus('Select at least one persona', 'error'); return; }
+
+  // Ensure all tasks have saved state
+  await saveActiveTaskState();
+
+  // Validate tasks have waypoints
+  for (const tid of selTaskIds) {
+    const t = tasks.find(tt => tt.id === tid);
+    const wpCount = t ? t.items.filter(i => i.type === 'waypoint').length : 0;
+    if (wpCount < 2) {
+      updateStatus(`Task "${t?.name}" needs at least 2 waypoints`, 'error');
+      return;
+    }
+  }
+
+  const experimentSeed = Date.now();
+  experimentRunning = true;
+  btnSimulate.disabled = true;
+  updateStatus('Running experiment...', '');
+
+  // Build results structure
+  experimentResults = selTaskIds.map((tid, ti) => {
+    const t = tasks.find(tt => tt.id === tid);
+    return {
+      taskId: tid,
+      taskName: t?.name || tid,
+      expanded: true,
+      sims: selPersonaIds.map((pid, si) => {
+        const p = personas.find(pp => pp.id === pid);
+        return {
+          personaId: pid,
+          personaName: p?.name || pid,
+          personaCfg: p ? JSON.parse(JSON.stringify(p.config)) : {},
+          expanded: true,
+          rounds: Array.from({ length: runsPerConfig }, (_, ri) => ({
+            seed: makeSeed(experimentSeed, ti, si, ri),
+            status: 'pending',
+            trajectory: null,
+            duration: null,
+            error: null
+          }))
+        };
+      })
+    };
+  });
+
+  resultsSection.style.display = 'block';
+  renderResults();
+
+  // Gather common data
+  let cookies = [];
+  let viewportW = 1920, viewportH = 1080, tabUrl = '';
+  try {
+    const tab = await getCurrentTab();
+    cookies = (await chrome.cookies.getAll({ url: tab.url })).map(c => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path,
+      secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite
+    }));
+    const st = await sendToContentScript({ type: 'getState' });
+    viewportW = st?.screenWidth || tab.width || 1920;
+    viewportH = st?.screenHeight || tab.height || 1080;
+    tabUrl = tab.url;
+  } catch (_) {}
+
+  // Execute all simulations sequentially
+  for (let ti = 0; ti < experimentResults.length; ti++) {
+    const taskRes = experimentResults[ti];
+    const taskData = tasks.find(tt => tt.id === taskRes.taskId);
+    if (!taskData) continue;
+    const taskConfig = buildTaskConfig(taskData, viewportW, viewportH);
+
+    for (let si = 0; si < taskRes.sims.length; si++) {
+      const sim = taskRes.sims[si];
+
+      for (let ri = 0; ri < sim.rounds.length; ri++) {
+        const round = sim.rounds[ri];
+        round.status = 'running';
+        renderResults();
+
+        try {
+          const result = await runSingleSim(
+            taskConfig, sim.personaCfg, round.seed,
+            cookies, { width: viewportW, height: viewportH }, tabUrl
+          );
+          if (result.success && result.trajectory) {
+            round.trajectory = result.trajectory;
+            round.duration = result.total_duration ?? (result.trajectory.length > 0 ? result.trajectory[result.trajectory.length - 1][2] : 0);
+            round.violations = checkViolations(result.trajectory, taskConfig);
+            round.status = 'done';
+          } else {
+            round.status = 'error';
+            round.error = result.error || 'Unknown error';
+          }
+        } catch (err) {
+          round.status = 'error';
+          round.error = err.message;
+        }
+        renderResults();
+      }
+    }
+  }
+
+  experimentRunning = false;
+  btnSimulate.disabled = false;
+  updateStatus('Experiment complete', 'success');
+});
+
+// ====== Playback Management ======
+
+async function playRound(taskIdx, simIdx, roundIdx) {
+  const round = experimentResults[taskIdx]?.sims[simIdx]?.rounds[roundIdx];
+  if (!round || !round.trajectory) return;
+
+  // Stop any current playback
+  if (playingRoundRef) {
+    await stopPlayback();
+  }
+
+  playingRoundRef = { taskIdx, simIdx, roundIdx };
+  isReplaying = true;
+
+  try {
+    await sendToContentScript({ type: 'setTrajectory', trajectory: round.trajectory });
+    await sendToContentScript({ type: 'startReplay' });
+  } catch (_) {}
+
+  renderResults();
+}
+
+async function stopPlayback() {
+  if (!playingRoundRef) return;
+  try {
+    await sendToContentScript({ type: 'stopReplay' });
+  } catch (_) {}
+  playingRoundRef = null;
+  isReplaying = false;
+  renderResults();
+}
+
+// ====== Results Rendering ======
+
+function renderResults() {
+  resultsTree.innerHTML = '';
+  if (experimentResults.length === 0) return;
+
+  experimentResults.forEach((taskRes, ti) => {
+    const taskEl = document.createElement('div');
+    taskEl.className = 'res-task';
+
+    const taskHeader = document.createElement('div');
+    taskHeader.className = 'res-task-header';
+    const tExpIcon = document.createElement('span');
+    tExpIcon.className = 'expand-icon' + (taskRes.expanded ? ' expanded' : '');
+    tExpIcon.textContent = '\u25B6';
+    taskHeader.appendChild(tExpIcon);
+    taskHeader.appendChild(document.createTextNode(taskRes.taskName));
+    taskHeader.addEventListener('click', () => { taskRes.expanded = !taskRes.expanded; renderResults(); });
+    taskEl.appendChild(taskHeader);
+
+    if (taskRes.expanded) {
+      taskRes.sims.forEach((sim, si) => {
+        const simEl = document.createElement('div');
+        simEl.className = 'res-sim';
+
+        const simHeader = document.createElement('div');
+        simHeader.className = 'res-sim-header';
+        const sExpIcon = document.createElement('span');
+        sExpIcon.className = 'expand-icon' + (sim.expanded ? ' expanded' : '');
+        sExpIcon.textContent = '\u25B6';
+        simHeader.appendChild(sExpIcon);
+        simHeader.appendChild(document.createTextNode(sim.personaName));
+
+        // Completion badge
+        const doneCount = sim.rounds.filter(r => r.status === 'done').length;
+        const errCount = sim.rounds.filter(r => r.status === 'error').length;
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:10px;color:#737373;margin-left:auto;';
+        badge.textContent = `${doneCount}/${sim.rounds.length}`;
+        if (errCount > 0) badge.textContent += ` (${errCount} failed)`;
+        simHeader.appendChild(badge);
+
+        simHeader.addEventListener('click', () => { sim.expanded = !sim.expanded; renderResults(); });
+        simEl.appendChild(simHeader);
+
+        if (sim.expanded) {
+          // Aggregated metrics
+          const completedRounds = sim.rounds.filter(r => r.status === 'done' && r.duration != null);
+          if (completedRounds.length > 0) {
+            const times = completedRounds.map(r => r.duration);
+            const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+
+            // Constraint violations
+            const violatingRoundIndices = [];
+            sim.rounds.forEach((r, ri) => {
+              if (r.status === 'done' && r.violations && r.violations.violated) {
+                violatingRoundIndices.push(ri + 1);
+              }
+            });
+            const violationRate = completedRounds.length > 0
+              ? (violatingRoundIndices.length / completedRounds.length * 100).toFixed(0)
+              : 0;
+
+            const info = document.createElement('div');
+            info.className = 'res-sim-info';
+            let html = `<span class="metric-label">Avg time:</span> <span class="metric-val">${avgTime.toFixed(2)}s</span>`;
+            html += `<br><span class="metric-label">Completed:</span> <span class="metric-val">${doneCount}/${sim.rounds.length}</span>`;
+            if (errCount > 0) html += ` <span class="metric-warn">(${errCount} failed)</span>`;
+            html += `<br><span class="metric-label">Violations:</span> `;
+            if (violatingRoundIndices.length === 0) {
+              html += `<span class="metric-val">None</span>`;
+            } else {
+              html += `<span class="metric-warn">${violationRate}% — check Round${violatingRoundIndices.length > 1 ? 's' : ''} ${violatingRoundIndices.join(', ')}</span>`;
+            }
+            info.innerHTML = html;
+            simEl.appendChild(info);
+          }
+
+          // Round entries
+          sim.rounds.forEach((round, ri) => {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'res-round';
+
+            const isPlaying = playingRoundRef && playingRoundRef.taskIdx === ti && playingRoundRef.simIdx === si && playingRoundRef.roundIdx === ri;
+
+            const labelEl = document.createElement('span');
+            labelEl.className = 'res-round-label';
+            labelEl.textContent = 'Round ' + (ri + 1);
+            labelEl.title = 'Seed: ' + round.seed;
+            rowEl.appendChild(labelEl);
+
+            const barEl = document.createElement('div');
+            barEl.className = 'res-round-bar';
+            const fillEl = document.createElement('div');
+            fillEl.className = 'res-round-bar-fill';
+            if (round.status === 'done') { fillEl.classList.add('done'); fillEl.style.width = '100%'; }
+            else if (round.status === 'running') { fillEl.classList.add('running'); fillEl.style.width = '60%'; }
+            else if (round.status === 'error') { fillEl.classList.add('error'); fillEl.style.width = '100%'; }
+            else { fillEl.style.width = '0%'; }
+            barEl.appendChild(fillEl);
+            rowEl.appendChild(barEl);
+
+            const timeEl = document.createElement('span');
+            timeEl.className = 'res-round-time';
+            timeEl.textContent = round.duration != null ? round.duration.toFixed(1) + 's' : '';
+            rowEl.appendChild(timeEl);
+
+            const playBtn = document.createElement('button');
+            playBtn.className = 'res-round-play' + (isPlaying ? ' playing' : '');
+            playBtn.textContent = isPlaying ? '\u25A0 Stop' : '\u25B6 Play';
+            playBtn.disabled = !round.trajectory;
+            playBtn.addEventListener('click', () => {
+              if (isPlaying) { stopPlayback(); }
+              else { playRound(ti, si, ri); }
+            });
+            rowEl.appendChild(playBtn);
+
+            simEl.appendChild(rowEl);
+          });
+        }
+
+        taskEl.appendChild(simEl);
+      });
+    }
+
+    resultsTree.appendChild(taskEl);
+  });
 }
 
 // ====== Message Listener ======
@@ -1211,9 +1486,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       constraintCountSpan.textContent = constraintCount;
       btnUndo.disabled = false;
       btnRedo.disabled = true;
-      const typeLabel = message.item?.type === 'waypoint' ? 'Waypoint' : 'Constraint';
-      updateStatus(`${typeLabel} added`, 'success');
+      updateStatus(`${message.item?.type === 'waypoint' ? 'Waypoint' : 'Constraint'} added`, 'success');
       renderTasksList();
+      renderExpChecks();
       break;
     }
     case 'itemsChanged': {
@@ -1246,28 +1521,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       constraintCount = 0;
       constraintCountSpan.textContent = '0';
       break;
-    case 'trajectoryLoaded':
-      trajectoryCount = message.count;
-      trajectoryCountSpan.textContent = trajectoryCount;
-      break;
-    case 'replayProgress':
-      if (!isDragging) {
-        const progress = message.total > 0 ? message.current / message.total : 0;
-        timelineProgress.style.width = `${progress * 100}%`;
-        timelineHandle.style.left = `${progress * 100}%`;
-        timelineCurrent.textContent = `${message.time.toFixed(2)}s`;
+    case 'replayComplete':
+      if (playingRoundRef) {
+        playingRoundRef = null;
+        isReplaying = false;
+        renderResults();
       }
       break;
-    case 'replayComplete':
-      isReplaying = false;
-      btnReplay.disabled = false;
-      btnStop.disabled = true;
-      updateStatus('Replay complete', 'success');
-      break;
     case 'replayStopped':
-      isReplaying = false;
-      btnReplay.disabled = false;
-      btnStop.disabled = true;
+      if (playingRoundRef) {
+        playingRoundRef = null;
+        isReplaying = false;
+        renderResults();
+      }
       break;
   }
   sendResponse({ success: true });
@@ -1349,10 +1615,8 @@ document.addEventListener('keyup', (e) => {
     if (st) {
       waypointCount = st.waypoints?.length || 0;
       constraintCount = st.constraints?.length || 0;
-      trajectoryCount = st.trajectoryCount || 0;
       waypointCountSpan.textContent = waypointCount;
       constraintCountSpan.textContent = constraintCount;
-      trajectoryCountSpan.textContent = trajectoryCount;
       currentMode = st.mode || 'passthrough';
       updateModeButtons(currentMode);
       btnUndo.disabled = !(st.canUndo);
@@ -1374,4 +1638,6 @@ document.addEventListener('keyup', (e) => {
   } catch (_) {
     updateStatus('Refresh the webpage tab, then open this panel again.', 'error');
   }
+
+  renderExpChecks();
 })();

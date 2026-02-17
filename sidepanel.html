@@ -806,6 +806,160 @@
     .persona-slider-value {
       display: none;
     }
+
+    /* Experiment design */
+    .exp-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .exp-col {
+      background: #262626;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .exp-col-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .exp-col-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a3a3a3;
+      letter-spacing: 0.04em;
+    }
+    .exp-col-actions {
+      display: flex;
+      gap: 2px;
+    }
+    .exp-sel-btn {
+      background: none;
+      border: none;
+      color: #525252;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 1px 4px;
+      border-radius: 3px;
+      transition: color 0.15s;
+    }
+    .exp-sel-btn:hover { color: #93c5fd; }
+    .exp-check-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 110px;
+      overflow-y: auto;
+    }
+    .exp-check-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #e5e5e5;
+      cursor: pointer;
+      padding: 3px 4px;
+      border-radius: 4px;
+      transition: background 0.1s;
+    }
+    .exp-check-item:hover { background: rgba(255,255,255,0.04); }
+    .exp-check-item input[type="checkbox"] {
+      accent-color: #60a5fa;
+      width: 13px;
+      height: 13px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .exp-config-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .exp-config-label {
+      font-size: 12px;
+      color: #a3a3a3;
+    }
+    .exp-runs-input {
+      width: 52px;
+      padding: 5px 8px;
+      font-size: 12px;
+      background: #262626;
+      color: #e5e5e5;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      outline: none;
+      font-family: inherit;
+      text-align: center;
+    }
+    .exp-runs-input:focus { border-color: #60a5fa; }
+    .exp-status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: #737373;
+    }
+    .exp-status-row .info-value { color: #a3a3a3; }
+
+    /* Results tree */
+    .res-task { margin-bottom: 8px; }
+    .res-task-header {
+      font-size: 12px; font-weight: 600; color: #93c5fd;
+      padding: 4px 0; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .res-task-header .expand-icon {
+      font-size: 10px; color: #737373; transition: transform 0.15s; display: inline-block;
+    }
+    .res-task-header .expand-icon.expanded { transform: rotate(90deg); }
+    .res-sim {
+      margin-left: 8px; margin-bottom: 6px;
+      border-left: 2px solid #404040; padding-left: 10px;
+    }
+    .res-sim-header {
+      font-size: 11px; font-weight: 600; color: #e5e5e5;
+      padding: 3px 0; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .res-sim-header .expand-icon {
+      font-size: 9px; color: #737373; transition: transform 0.15s; display: inline-block;
+    }
+    .res-sim-header .expand-icon.expanded { transform: rotate(90deg); }
+    .res-sim-info {
+      font-size: 10px; color: #a3a3a3; padding: 4px 0 4px 16px; line-height: 1.6;
+    }
+    .res-sim-info .metric-label { color: #737373; }
+    .res-sim-info .metric-val { color: #e5e5e5; font-weight: 500; }
+    .res-sim-info .metric-warn { color: #fbbf24; }
+    .res-round {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 0 3px 16px; font-size: 11px; color: #e5e5e5;
+    }
+    .res-round-label { min-width: 52px; flex-shrink: 0; }
+    .res-round-bar {
+      flex: 1; height: 6px; background: #404040; border-radius: 3px; overflow: hidden;
+    }
+    .res-round-bar-fill {
+      height: 100%; border-radius: 3px; transition: width 0.3s;
+    }
+    .res-round-bar-fill.running { background: #60a5fa; }
+    .res-round-bar-fill.done { background: #22c55e; }
+    .res-round-bar-fill.error { background: #ef4444; }
+    .res-round-play {
+      background: none; border: 1px solid #404040; border-radius: 4px;
+      color: #a3a3a3; cursor: pointer; padding: 1px 6px; font-size: 10px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .res-round-play:hover { color: #e5e5e5; border-color: #60a5fa; }
+    .res-round-play.playing { color: #60a5fa; border-color: #60a5fa; }
+    .res-round-play:disabled { opacity: 0.3; cursor: default; }
+    .res-round-time { font-size: 10px; color: #737373; min-width: 36px; text-align: right; }
     .persona-slider-tooltip {
       position: absolute;
       bottom: 100%;
@@ -932,7 +1086,7 @@
 
   <div class="personas-panel">
     <div class="personas-header">
-      <span class="personas-title">USER PERSONAS</span>
+      <span class="personas-title">User Personas</span>
     </div>
     <div class="personas-controls">
       <select id="persona-select" class="persona-select"></select>
@@ -983,55 +1137,43 @@
   </div>
   
   <div class="section">
-    <div class="section-title">Simulations</div>
-    <div class="button-group">
-      <button id="btn-simulate" class="btn-primary">Run Simulation</button>
+    <div class="section-title">Design Experiment</div>
+    <div class="exp-columns">
+      <div class="exp-col">
+        <div class="exp-col-header">
+          <span class="exp-col-title">TASKS</span>
+          <div class="exp-col-actions">
+            <button type="button" class="exp-sel-btn" id="exp-tasks-all" title="Select all">All</button>
+            <button type="button" class="exp-sel-btn" id="exp-tasks-none" title="Clear selection">None</button>
+          </div>
+        </div>
+        <div id="exp-tasks-checks" class="exp-check-list"></div>
+      </div>
+      <div class="exp-col">
+        <div class="exp-col-header">
+          <span class="exp-col-title">PERSONAS</span>
+          <div class="exp-col-actions">
+            <button type="button" class="exp-sel-btn" id="exp-personas-all" title="Select all">All</button>
+            <button type="button" class="exp-sel-btn" id="exp-personas-none" title="Clear selection">None</button>
+          </div>
+        </div>
+        <div id="exp-personas-checks" class="exp-check-list"></div>
+      </div>
+    </div>
+    <div class="exp-config-row">
+      <span class="exp-config-label">Runs per task–persona</span>
+      <input type="number" id="exp-runs" class="exp-runs-input" min="1" value="1">
+    </div>
+    <button id="btn-simulate" class="btn-primary" style="width:100%;">Run Simulation</button>
+    <div id="status" class="status" style="margin-top: 8px;">Ready</div>
+    <div class="exp-status-row">
+      <span>Active task: <span id="waypoint-count" class="info-value">0</span> waypoints, <span id="constraint-count" class="info-value">0</span> constraints</span>
     </div>
   </div>
-  
-  <div class="section">
-    <div class="section-title">Status</div>
-    <div id="status" class="status">Ready</div>
-    <div class="info-item">
-      <span class="info-label">Waypoints:</span>
-      <span id="waypoint-count" class="info-value">0</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Constraints:</span>
-      <span id="constraint-count" class="info-value">0</span>
-    </div>
-    <div class="info-item">
-      <span class="info-label">Trajectory Points:</span>
-      <span id="trajectory-count" class="info-value">0</span>
-    </div>
-  </div>
-  
-  <div class="section" id="replay-section" style="display: none;">
-    <div class="section-title">Replay Controls</div>
-    <div class="button-group">
-      <button id="btn-replay" class="btn-primary">Start Replay</button>
-      <button id="btn-stop" class="btn-danger">Stop</button>
-    </div>
-    <div class="timeline-container">
-      <div class="timeline" id="timeline">
-        <div class="timeline-progress" id="timeline-progress"></div>
-        <div class="timeline-handle" id="timeline-handle"></div>
-      </div>
-      <div class="timeline-info">
-        <span id="timeline-current">0.0s</span>
-        <span id="timeline-total">0.0s</span>
-      </div>
-    </div>
-    <div class="toggle-row" style="margin-top: 12px;">
-      <label class="toggle-switch">
-        <input type="checkbox" id="toggle-debugger" checked>
-        <span class="toggle-slider"></span>
-      </label>
-      <div class="toggle-text">
-        <span class="toggle-label">Enable CSS :hover</span>
-        <span class="toggle-note">(shows warning bar)</span>
-      </div>
-    </div>
+
+  <div class="section" id="results-section" style="display:none;">
+    <div class="section-title">Results</div>
+    <div id="results-tree"></div>
   </div>
   
   <script src="lucide.min.js"></script>
