@@ -149,6 +149,7 @@
     }
     
     .tool-btn-keepin .icon { background: rgba(59, 130, 246, 0.12); }
+    .tool-btn-click .icon { background: rgba(168, 85, 247, 0.12); }
     .tool-btn-keepout .icon { background: rgba(239, 68, 68, 0.12); }
     .tool-btn-accent .icon { background: rgba(96, 165, 250, 0.12); }
     .tool-btn-danger .icon { background: rgba(239, 68, 68, 0.12); }
@@ -609,6 +610,9 @@
     .item-icon.constraint-icon.keep-out {
       color: #ef4444;
     }
+    .item-icon.click-icon {
+      color: #a855f7;
+    }
     .item-label {
       flex: 1;
       overflow: hidden;
@@ -1006,7 +1010,11 @@
           <span>Move Waypoint</span>
           <span class="shortcut">W</span>
         </button>
-        <span class="tool-grid-placeholder"></span>
+        <button type="button" id="btn-add-click" class="tool-btn tool-btn-click" title="Add click waypoint (E)">
+          <span class="icon icon-square"><i data-lucide="mouse-pointer-click"></i></span>
+          <span>Click</span>
+          <span class="shortcut">E</span>
+        </button>
       </div>
     </div>
     

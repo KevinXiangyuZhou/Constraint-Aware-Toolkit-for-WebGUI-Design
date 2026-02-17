@@ -61,9 +61,10 @@ function syncStateFromItems() {
   state.waypoints = [];
   state.constraints = [];
   for (const item of state.items) {
-    if (item.type === 'waypoint') {
+    if (item.type === 'waypoint' || item.type === 'waypoint_click') {
       item.data.pixelX = item.data.x * state.screenWidth;
       item.data.pixelY = item.data.y * state.screenHeight;
+      item.data._isClick = item.type === 'waypoint_click';
       state.waypoints.push(item.data);
     } else if (item.type === 'constraint') {
       item.data._enabled = item.enabled !== false;
@@ -156,6 +157,7 @@ function removeOverlay() {
 const MODE_HINTS = {
   addWaypoint: 'Hold Q — click to add waypoints. Release Q to exit.',
   moveWaypoint: 'Hold W — drag a waypoint to move it. Release W to exit.',
+  addClickWaypoint: 'Hold E — click on an element to add a click waypoint. Release E to exit.',
   addRectKeepIn: 'Hold S — drag to draw a keep-in area (blue). Release S to exit.',
   addRectKeepOut: 'Hold F — drag to draw a keep-out area (red). Release F to exit.',
   addPathKeepIn: 'Hold D — click to add path points; release D to finish corridor (blue).',
@@ -166,7 +168,7 @@ const MODE_HINTS = {
 };
 
 // List of design modes where we freeze the page (block all mouse/pointer events)
-const DESIGN_MODES = ['addWaypoint', 'moveWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'];
+const DESIGN_MODES = ['addWaypoint', 'moveWaypoint', 'addClickWaypoint', 'addRectKeepIn', 'addRectKeepOut', 'addPathKeepIn', 'addPathKeepOut', 'resizeConstraint'];
 
 function isDesignMode() {
   return DESIGN_MODES.includes(state.mode);
@@ -286,8 +288,87 @@ function addWaypoint(x, y) {
   } catch (_) {}
 }
 
+// Generate a stable CSS selector for an element
+function getStableSelector(el) {
+  if (!el || el === document.body || el === document.documentElement) return 'body';
+  if (el.id) return '#' + CSS.escape(el.id);
+  const parts = [];
+  let cur = el;
+  while (cur && cur !== document.body && cur !== document.documentElement) {
+    let sel = cur.tagName.toLowerCase();
+    if (cur.id) { parts.unshift('#' + CSS.escape(cur.id)); break; }
+    if (cur.className && typeof cur.className === 'string') {
+      const classes = cur.className.trim().split(/\s+/).filter(c => c.length > 0).slice(0, 2);
+      if (classes.length) sel += '.' + classes.map(c => CSS.escape(c)).join('.');
+    }
+    const parent = cur.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+      if (siblings.length > 1) {
+        const idx = siblings.indexOf(cur) + 1;
+        sel += ':nth-of-type(' + idx + ')';
+      }
+    }
+    parts.unshift(sel);
+    cur = cur.parentElement;
+  }
+  return parts.join(' > ');
+}
+
+// Generate XPath for an element
+function getXPath(el) {
+  if (!el) return '';
+  const parts = [];
+  let cur = el;
+  while (cur && cur.nodeType === Node.ELEMENT_NODE) {
+    let idx = 1;
+    let sib = cur.previousElementSibling;
+    while (sib) {
+      if (sib.tagName === cur.tagName) idx++;
+      sib = sib.previousElementSibling;
+    }
+    parts.unshift(cur.tagName.toLowerCase() + '[' + idx + ']');
+    cur = cur.parentElement;
+  }
+  return '/' + parts.join('/');
+}
+
+// Click waypoint management
+function addClickWaypoint(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const selector = el ? getStableSelector(el) : '';
+  const xpath = el ? getXPath(el) : '';
+  const bbox = el ? el.getBoundingClientRect() : { x: x, y: y, width: 0, height: 0 };
+  const data = {
+    x: x / state.screenWidth,
+    y: y / state.screenHeight,
+    pixelX: x,
+    pixelY: y,
+    selector: selector,
+    xpath: xpath,
+    boundingBox: { x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height },
+    pageUrl: window.location.href,
+    dwellMs: 200,
+    toleranceRadiusPx: 10
+  };
+  const item = { id: generateItemId(), type: 'waypoint_click', data: data, enabled: true };
+  state.items.push(item);
+  syncStateFromItems();
+  state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
+  state.redoStack = [];
+  renderOverlay();
+  try {
+    chrome.runtime.sendMessage({
+      type: 'itemAdded',
+      item: { id: item.id, type: 'waypoint_click', data: data, enabled: true },
+      waypointCount: state.waypoints.length,
+      constraintCount: state.constraints.length
+    });
+  } catch (_) {}
+}
+
 function clearWaypoints() {
-  state.items = state.items.filter(i => i.type !== 'waypoint');
+  state.items = state.items.filter(i => i.type !== 'waypoint' && i.type !== 'waypoint_click');
   syncStateFromItems();
   renderOverlay();
   notifyItemsChanged();
@@ -582,29 +663,46 @@ function renderOverlay() {
   const ctx = state.ctx;
   ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
   
-  // Draw waypoints
+  // Draw waypoints (regular + click, with separate numbering)
+  let wpNum = 0, clickNum = 0;
   state.waypoints.forEach((wp, index) => {
     const x = wp.pixelX;
     const y = wp.pixelY;
+    const isClick = wp._isClick;
+    const color = isClick ? '#a855f7' : '#3b82f6';
+
+    if (isClick) clickNum++; else wpNum++;
     
     // Draw marker
-    ctx.fillStyle = '#3b82f6';
+    ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x, y, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = 'white';
     ctx.lineWidth = 2;
     ctx.stroke();
+
+    // Draw click ring indicator
+    if (isClick) {
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     
     // Draw label
     ctx.fillStyle = 'white';
     ctx.font = '12px Arial';
-    ctx.fillText(`${index + 1}`, x + 10, y - 10);
+    const label = isClick ? ('C' + clickNum) : ('' + wpNum);
+    ctx.fillText(label, x + 10, y - 10);
     
-    // Draw connection line
+    // Draw connection line to previous waypoint
     if (index > 0) {
       const prev = state.waypoints[index - 1];
-      ctx.strokeStyle = '#3b82f6';
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
@@ -883,6 +981,8 @@ document.addEventListener('mousedown', (e) => {
   const px = e.clientX, py = e.clientY;
   if (state.mode === 'addWaypoint') {
     addWaypoint(px, py);
+  } else if (state.mode === 'addClickWaypoint') {
+    addClickWaypoint(px, py);
   } else if (state.mode === 'moveWaypoint') {
     const idx = hitTestWaypoint(px, py);
     if (idx >= 0) {
@@ -993,6 +1093,10 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     setMode('moveWaypoint');
+  } else if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault();
+    e.stopPropagation();
+    setMode('addClickWaypoint');
   } else if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
     e.stopPropagation();
@@ -1028,6 +1132,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
+      e.key === 'e' || e.key === 'E' ||
       e.key === 's' || e.key === 'S' || e.key === 'd' || e.key === 'D' ||
       e.key === 'f' || e.key === 'F' || e.key === 'g' || e.key === 'G' ||
       e.key === 'a' || e.key === 'A') {
@@ -1036,6 +1141,43 @@ document.addEventListener('keyup', (e) => {
     setMode('passthrough');
   }
 }, true);
+
+// Execute a real DOM click on a target element
+function executeClick(ct) {
+  let el = null;
+  let method = 'none';
+  // Try CSS selector
+  if (ct.selector) {
+    try { el = document.querySelector(ct.selector); method = 'selector'; } catch (_) {}
+  }
+  // Fallback: XPath
+  if (!el && ct.xpath) {
+    try {
+      const xr = document.evaluate(ct.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      el = xr.singleNodeValue;
+      if (el) method = 'xpath';
+    } catch (_) {}
+  }
+  // Fallback: elementFromPoint
+  if (!el) {
+    el = document.elementFromPoint(ct.x, ct.y);
+    if (el) method = 'elementFromPoint';
+  }
+  if (!el) {
+    return { success: false, failureReason: 'element_not_found', method };
+  }
+  const opts = { view: window, bubbles: true, cancelable: true, clientX: ct.x, clientY: ct.y };
+  try {
+    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.dispatchEvent(new PointerEvent('pointerup', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
+    return { success: true, method, tagName: el.tagName, href: el.href || null };
+  } catch (err) {
+    return { success: false, failureReason: 'click_intercepted', error: err.message, method };
+  }
+}
 
 // Message listener from side panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1117,6 +1259,80 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.useDebugger = !!message.enabled;
       sendResponse({ success: true });
       break;
+    case 'loadReplaySegment': {
+      // Plays a trajectory segment, optionally ending with a dwell-then-click
+      // message: { trajectory: [[x,y,t],...], clickTarget?: { x, y, dwellMs, toleranceRadiusPx, selector, xpath, itemId } }
+      setTrajectory(message.trajectory);
+      state.isReplaying = true;
+      state.currentTrajectoryIndex = 0;
+      state.replayStartTime = Date.now();
+      state.replayPrevElement = null;
+      const segTraj = message.trajectory;
+      const ct = message.clickTarget || null;
+      const totalDur = segTraj.length > 0 ? segTraj[segTraj.length - 1][2] : 0;
+      let dwellAccum = 0;
+      let dwellStarted = false;
+
+      function animateSegment() {
+        if (!state.isReplaying) return;
+        const elapsed = (Date.now() - state.replayStartTime) / 1000;
+
+        if (elapsed >= totalDur) {
+          // Trajectory segment ended
+          const last = segTraj[segTraj.length - 1];
+          if (last) { showGhostCursor(last[0], last[1]); dispatchCursorEvents(last[0], last[1]); }
+
+          if (ct) {
+            // Enter dwell phase
+            if (!dwellStarted) { dwellStarted = true; dwellAccum = 0; }
+            const cx = last ? last[0] : ct.x;
+            const cy = last ? last[1] : ct.y;
+            const dist = Math.hypot(cx - ct.x, cy - ct.y);
+            if (dist <= (ct.toleranceRadiusPx || 10)) {
+              dwellAccum += 16; // ~1 frame at 60fps
+              if (dwellAccum >= (ct.dwellMs || 200)) {
+                // Fire click
+                const clickResult = executeClick(ct);
+                state.isReplaying = false;
+                hideGhostCursor();
+                try {
+                  chrome.runtime.sendMessage({ type: 'clickFired', result: clickResult, itemId: ct.itemId });
+                } catch (_) {}
+                return;
+              }
+            } else {
+              dwellAccum = 0; // reset if outside tolerance
+            }
+            requestAnimationFrame(animateSegment);
+            return;
+          }
+
+          // No click target — segment complete
+          state.isReplaying = false;
+          try { chrome.runtime.sendMessage({ type: 'segmentComplete' }); } catch (_) {}
+          return;
+        }
+
+        // Normal trajectory playback
+        let currentIndex = 0;
+        for (let i = 0; i < segTraj.length; i++) {
+          if (segTraj[i][2] <= elapsed) currentIndex = i; else break;
+        }
+        const [x, y] = segTraj[currentIndex];
+        showGhostCursor(x, y);
+        dispatchCursorEvents(x, y);
+        state.currentTrajectoryIndex = currentIndex;
+        try {
+          chrome.runtime.sendMessage({ type: 'replayProgress', current: currentIndex, total: segTraj.length, time: elapsed });
+        } catch (_) {}
+        requestAnimationFrame(animateSegment);
+      }
+
+      createOverlay();
+      animateSegment();
+      sendResponse({ success: true });
+      break;
+    }
     case 'loadTaskState': {
       state.items = (message.items || []).map(i => ({
         id: i.id,

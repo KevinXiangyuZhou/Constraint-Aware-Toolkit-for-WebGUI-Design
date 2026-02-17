@@ -24,6 +24,7 @@ const btnRectKeepOut = document.getElementById('btn-rect-keep-out');
 const btnPathKeepIn = document.getElementById('btn-path-keep-in');
 const btnPathKeepOut = document.getElementById('btn-path-keep-out');
 const btnResizeConstraint = document.getElementById('btn-resize-constraint');
+const btnAddClick = document.getElementById('btn-add-click');
 const btnQuitDesign = document.getElementById('btn-quit-design');
 const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
@@ -60,12 +61,14 @@ const TOOL_BUTTONS = [
   btnPathKeepIn,
   btnPathKeepOut,
   btnResizeConstraint,
+  btnAddClick,
   btnQuitDesign
 ];
 
 const ACTIVE_BADGE_LABELS = {
   addWaypoint: 'ACTIVE: Add waypoint (Q)',
   moveWaypoint: 'ACTIVE: Move waypoint (W)',
+  addClickWaypoint: 'ACTIVE: Click waypoint (E)',
   addRectKeepIn: 'ACTIVE: Area keep-in (S)',
   addRectKeepOut: 'ACTIVE: Area keep-out (F)',
   addPathKeepIn: 'ACTIVE: Path keep-in (D)',
@@ -77,6 +80,7 @@ const ACTIVE_BADGE_LABELS = {
 const MODE_HINTS = {
   addWaypoint: 'Click to add a waypoint. Release Q to exit.',
   moveWaypoint: 'Drag a waypoint to move it. Release W to exit.',
+  addClickWaypoint: 'Click on an element to add a click waypoint. Release E to exit.',
   addRectKeepIn: 'Drag to draw a keep-in area (blue). Release S to exit.',
   addRectKeepOut: 'Drag to draw a keep-out area (red). Release F to exit.',
   addPathKeepIn: 'Click to add path points; release D to finalize corridor (blue).',
@@ -115,6 +119,7 @@ function updateModeButtons(mode) {
   const byMode = {
     addWaypoint: btnAddWaypoint,
     moveWaypoint: btnMoveWaypoint,
+    addClickWaypoint: btnAddClick,
     addRectKeepIn: btnRectKeepIn,
     addRectKeepOut: btnRectKeepOut,
     addPathKeepIn: btnPathKeepIn,
@@ -743,6 +748,7 @@ function renderTasksList() {
 
     let wpNum = 0;
     let cNum = 0;
+    let clickNum = 0;
 
     task.items.forEach(item => {
       const row = document.createElement('div');
@@ -765,6 +771,12 @@ function renderTasksList() {
         icon.classList.add('waypoint-icon');
         icon.textContent = '\u25CF';
         label.textContent = 'Waypoint ' + wpNum;
+      } else if (item.type === 'waypoint_click') {
+        clickNum++;
+        icon.classList.add('click-icon');
+        icon.textContent = '\u25CF';
+        label.textContent = 'Click ' + clickNum;
+        if (item.data?.selector) label.title = item.data.selector;
       } else {
         cNum++;
         const isKeepOut = item.data?.constraintType === 'keep-out';
@@ -971,6 +983,7 @@ btnRectKeepOut.addEventListener('click', () => setModeInPage('addRectKeepOut'));
 btnPathKeepIn.addEventListener('click', () => setModeInPage('addPathKeepIn'));
 btnPathKeepOut.addEventListener('click', () => setModeInPage('addPathKeepOut'));
 btnResizeConstraint.addEventListener('click', () => setModeInPage('resizeConstraint'));
+btnAddClick.addEventListener('click', () => setModeInPage('addClickWaypoint'));
 btnQuitDesign.addEventListener('click', () => setModeInPage('passthrough'));
 
 btnUndo.addEventListener('click', async () => {
@@ -1100,12 +1113,31 @@ document.getElementById('exp-personas-none').addEventListener('click', () => {
   expPersonasChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
 });
 
-// Build task config from a task's saved items
+// Build task config from a task's saved items. Returns { taskConfig, clickMap }.
+// clickMap: array of { waypointIndex, itemId, selector, xpath, x, y, dwellMs, toleranceRadiusPx, pageUrl }
 function buildTaskConfig(taskData, viewportW, viewportH) {
-  const waypoints = taskData.items.filter(i => i.type === 'waypoint');
+  const allWaypoints = taskData.items.filter(i => i.type === 'waypoint' || i.type === 'waypoint_click');
   const constraints = taskData.items.filter(i => i.type === 'constraint' && i.enabled !== false);
-  return {
-    waypoints: waypoints.map(w => [w.data.pixelX || w.data.x * viewportW, w.data.pixelY || w.data.y * viewportH]),
+
+  const clickMap = [];
+  allWaypoints.forEach((w, idx) => {
+    if (w.type === 'waypoint_click') {
+      clickMap.push({
+        waypointIndex: idx,
+        itemId: w.id,
+        selector: w.data.selector || '',
+        xpath: w.data.xpath || '',
+        x: w.data.pixelX || w.data.x * viewportW,
+        y: w.data.pixelY || w.data.y * viewportH,
+        dwellMs: w.data.dwellMs || 200,
+        toleranceRadiusPx: w.data.toleranceRadiusPx || 10,
+        pageUrl: w.data.pageUrl || ''
+      });
+    }
+  });
+
+  const taskConfig = {
+    waypoints: allWaypoints.map(w => [w.data.pixelX || w.data.x * viewportW, w.data.pixelY || w.data.y * viewportH]),
     screen_width: viewportW,
     screen_height: viewportH,
     constraints: {
@@ -1127,6 +1159,7 @@ function buildTaskConfig(taskData, viewportW, viewportH) {
       })
     }
   };
+  return { taskConfig, clickMap };
 }
 
 // Check trajectory for constraint violations.
@@ -1268,14 +1301,17 @@ btnSimulate.addEventListener('click', async () => {
     const taskRes = experimentResults[ti];
     const taskData = tasks.find(tt => tt.id === taskRes.taskId);
     if (!taskData) continue;
-    const taskConfig = buildTaskConfig(taskData, viewportW, viewportH);
+    const { taskConfig, clickMap } = buildTaskConfig(taskData, viewportW, viewportH);
 
     for (let si = 0; si < taskRes.sims.length; si++) {
       const sim = taskRes.sims[si];
+      sim.clickMap = clickMap;
 
       for (let ri = 0; ri < sim.rounds.length; ri++) {
         const round = sim.rounds[ri];
         round.status = 'running';
+        round.clickResults = [];
+        round.pageJumps = [];
         renderResults();
 
         try {
@@ -1308,27 +1344,174 @@ btnSimulate.addEventListener('click', async () => {
 
 // ====== Playback Management ======
 
+// Split a trajectory into segments at click waypoint positions.
+// clickMap entries have waypointIndex, but we need to map to trajectory point indices.
+// We find the trajectory point closest to each click waypoint's (x, y).
+function buildSegmentPlan(trajectory, clickMap) {
+  if (!clickMap || clickMap.length === 0) {
+    return [{ trajectory, clickTarget: null }];
+  }
+
+  // Find trajectory split points for each click waypoint
+  const splitIndices = [];
+  for (const cm of clickMap) {
+    let bestIdx = -1, bestDist = Infinity;
+    for (let i = 0; i < trajectory.length; i++) {
+      const d = Math.hypot(trajectory[i][0] - cm.x, trajectory[i][1] - cm.y);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx >= 0) splitIndices.push({ idx: bestIdx, cm });
+  }
+  splitIndices.sort((a, b) => a.idx - b.idx);
+
+  const segments = [];
+  let start = 0;
+  for (const { idx, cm } of splitIndices) {
+    const end = Math.min(idx + 1, trajectory.length);
+    const slice = trajectory.slice(start, end);
+    // Re-base timestamps to start from 0
+    const t0 = slice.length > 0 ? slice[0][2] : 0;
+    const rebased = slice.map(([x, y, t]) => [x, y, t - t0]);
+    segments.push({
+      trajectory: rebased,
+      clickTarget: { x: cm.x, y: cm.y, dwellMs: cm.dwellMs, toleranceRadiusPx: cm.toleranceRadiusPx, selector: cm.selector, xpath: cm.xpath, itemId: cm.itemId }
+    });
+    start = end;
+  }
+  // Remaining trajectory after last click
+  if (start < trajectory.length) {
+    const slice = trajectory.slice(start);
+    const t0 = slice.length > 0 ? slice[0][2] : 0;
+    const rebased = slice.map(([x, y, t]) => [x, y, t - t0]);
+    segments.push({ trajectory: rebased, clickTarget: null });
+  }
+  return segments;
+}
+
+// Wait for a message of a given type from content script, with timeout
+function waitForMessage(type, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(handler);
+      reject(new Error('timeout'));
+    }, timeoutMs);
+    function handler(msg, sender, sendResponse) {
+      if (msg.type === type) {
+        clearTimeout(timer);
+        chrome.runtime.onMessage.removeListener(handler);
+        resolve(msg);
+      }
+      if (sendResponse) sendResponse({ success: true });
+      return true;
+    }
+    chrome.runtime.onMessage.addListener(handler);
+  });
+}
+
+// Wait for the active tab to finish loading (after navigation)
+function waitForTabLoad(timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(handler);
+      reject(new Error('navigation_timeout'));
+    }, timeoutMs);
+    function handler(tabId, changeInfo) {
+      if (changeInfo.status === 'complete') {
+        getCurrentTab().then(tab => {
+          if (tab && tab.id === tabId) {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(handler);
+            resolve(tab.url);
+          }
+        });
+      }
+    }
+    chrome.tabs.onUpdated.addListener(handler);
+  });
+}
+
+let playbackAborted = false;
+
 async function playRound(taskIdx, simIdx, roundIdx) {
-  const round = experimentResults[taskIdx]?.sims[simIdx]?.rounds[roundIdx];
+  const sim = experimentResults[taskIdx]?.sims[simIdx];
+  const round = sim?.rounds[roundIdx];
   if (!round || !round.trajectory) return;
 
-  // Stop any current playback
-  if (playingRoundRef) {
-    await stopPlayback();
-  }
+  if (playingRoundRef) { await stopPlayback(); }
 
   playingRoundRef = { taskIdx, simIdx, roundIdx };
   isReplaying = true;
+  playbackAborted = false;
+  renderResults();
 
-  try {
-    await sendToContentScript({ type: 'setTrajectory', trajectory: round.trajectory });
-    await sendToContentScript({ type: 'startReplay' });
-  } catch (_) {}
+  const clickMap = sim.clickMap || [];
+  const segments = buildSegmentPlan(round.trajectory, clickMap);
 
+  round.clickResults = [];
+  round.pageJumps = [];
+  const tab = await getCurrentTab();
+  if (tab?.url) round.pageJumps.push(tab.url);
+
+  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+    if (playbackAborted) break;
+    const seg = segments[segIdx];
+    if (seg.trajectory.length === 0 && !seg.clickTarget) continue;
+
+    try {
+      if (seg.clickTarget) {
+        // Send segment with click target — wait for clickFired
+        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory, clickTarget: seg.clickTarget });
+        const clickMsg = await waitForMessage('clickFired', 30000);
+        const result = clickMsg.result || {};
+        const preUrl = (await getCurrentTab())?.url || '';
+        round.clickResults.push({
+          waypointId: seg.clickTarget.itemId,
+          success: result.success,
+          preClickUrl: preUrl,
+          postClickUrl: preUrl,
+          loadDurationMs: 0,
+          failureReason: result.failureReason || null
+        });
+
+        if (result.success) {
+          // Wait briefly to see if navigation happens
+          const navStart = Date.now();
+          try {
+            const newUrl = await waitForTabLoad(15000);
+            const loadDuration = Date.now() - navStart;
+            const lastClick = round.clickResults[round.clickResults.length - 1];
+            lastClick.postClickUrl = newUrl;
+            lastClick.loadDurationMs = loadDuration;
+            if (newUrl !== preUrl) round.pageJumps.push(newUrl);
+            // Small delay for content script to re-inject
+            await new Promise(r => setTimeout(r, 500));
+          } catch (navErr) {
+            // No navigation or timeout — that's OK, continue
+            if (navErr.message === 'navigation_timeout') {
+              const lastClick = round.clickResults[round.clickResults.length - 1];
+              lastClick.failureReason = 'navigation_timeout';
+            }
+          }
+        }
+      } else {
+        // Simple segment without click — wait for segmentComplete
+        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory });
+        await waitForMessage('segmentComplete', 60000);
+      }
+    } catch (err) {
+      console.error('Segment playback error:', err);
+      break;
+    }
+    renderResults();
+  }
+
+  playingRoundRef = null;
+  isReplaying = false;
   renderResults();
 }
 
 async function stopPlayback() {
+  playbackAborted = true;
   if (!playingRoundRef) return;
   try {
     await sendToContentScript({ type: 'stopReplay' });
@@ -1412,6 +1595,18 @@ function renderResults() {
             } else {
               html += `<span class="metric-warn">${violationRate}% — check Round${violatingRoundIndices.length > 1 ? 's' : ''} ${violatingRoundIndices.join(', ')}</span>`;
             }
+            // Click failure aggregation
+            const allClickResults = sim.rounds.flatMap(r => r.clickResults || []);
+            if (allClickResults.length > 0) {
+              const clickFails = allClickResults.filter(c => !c.success).length;
+              html += `<br><span class="metric-label">Clicks:</span> `;
+              if (clickFails === 0) {
+                html += `<span class="metric-val">${allClickResults.length} OK</span>`;
+              } else {
+                html += `<span class="metric-warn">${clickFails}/${allClickResults.length} failed</span>`;
+              }
+            }
+
             info.innerHTML = html;
             simEl.appendChild(info);
           }
@@ -1456,6 +1651,28 @@ function renderResults() {
             rowEl.appendChild(playBtn);
 
             simEl.appendChild(rowEl);
+
+            // Show click results and page jumps for this round
+            if (round.clickResults && round.clickResults.length > 0) {
+              const clickInfo = document.createElement('div');
+              clickInfo.style.cssText = 'padding:2px 0 2px 68px;font-size:10px;color:#737373;';
+              const failures = round.clickResults.filter(c => !c.success);
+              if (failures.length > 0) {
+                clickInfo.innerHTML = '<span style="color:#fbbf24;">\u26A0 ' + failures.length + ' click(s) failed: ' + failures.map(f => f.failureReason || 'unknown').join(', ') + '</span>';
+              } else {
+                clickInfo.textContent = '\u2713 ' + round.clickResults.length + ' click(s) OK';
+                clickInfo.style.color = '#86efac';
+              }
+              simEl.appendChild(clickInfo);
+            }
+            if (round.pageJumps && round.pageJumps.length > 1) {
+              const jumpEl = document.createElement('div');
+              jumpEl.style.cssText = 'padding:1px 0 3px 68px;font-size:9px;color:#525252;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+              jumpEl.title = round.pageJumps.join(' → ');
+              const shortUrls = round.pageJumps.map(u => { try { return new URL(u).pathname; } catch (_) { return u; } });
+              jumpEl.textContent = shortUrls.join(' → ');
+              simEl.appendChild(jumpEl);
+            }
           });
         }
 
@@ -1553,6 +1770,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'w' || e.key === 'W') {
     e.preventDefault();
     setModeInPage('moveWaypoint');
+  } else if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault();
+    setModeInPage('addClickWaypoint');
   } else if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
     setModeInPage('addRectKeepIn');
@@ -1584,6 +1804,7 @@ document.addEventListener('keyup', (e) => {
   if (document.activeElement?.classList?.contains('task-name-input')) return;
 
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
+      e.key === 'e' || e.key === 'E' ||
       e.key === 's' || e.key === 'S' || e.key === 'd' || e.key === 'D' ||
       e.key === 'f' || e.key === 'F' || e.key === 'g' || e.key === 'G' ||
       e.key === 'a' || e.key === 'A') {

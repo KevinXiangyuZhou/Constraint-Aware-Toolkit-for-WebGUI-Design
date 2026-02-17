@@ -15,7 +15,8 @@
     "activeTab",
     "cookies",
     "storage",
-    "debugger"
+    "debugger",
+    "webNavigation"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
