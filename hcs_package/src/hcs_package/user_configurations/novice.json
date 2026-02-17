@@ -3,7 +3,7 @@
   "Tp": 0.05,
   "Th": 0.20,
   "nc": [0.26, 0.026],
-  "forearm": 0.34,
+  "forearm": 0.357,
   "planner_weights": {
     "jerk": 3e-05,
     "progress": 3e-08,

@@ -643,6 +643,189 @@
     .item-action-btn:hover {
       color: #fca5a5;
     }
+
+    /* User Personas panel */
+    .personas-panel {
+      margin-bottom: 20px;
+    }
+    .personas-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .personas-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e5e5e5;
+      letter-spacing: 0.02em;
+    }
+    .personas-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .persona-select {
+      flex: 1;
+      background: #2d2d2d;
+      color: #e5e5e5;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+      min-width: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23737373' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 26px;
+    }
+    .persona-select:hover {
+      border-color: #525252;
+    }
+    .persona-select:focus {
+      border-color: #60a5fa;
+    }
+    .persona-select optgroup {
+      color: #a3a3a3;
+      font-weight: 600;
+      font-style: normal;
+    }
+    .persona-select option {
+      color: #e5e5e5;
+      background: #2d2d2d;
+      font-weight: 400;
+    }
+    .persona-add-btn {
+      background: none;
+      border: 1px solid #404040;
+      border-radius: 6px;
+      color: #a3a3a3;
+      cursor: pointer;
+      padding: 4px 10px;
+      font-size: 14px;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: background 0.2s, color 0.2s;
+    }
+    .persona-add-btn:hover {
+      background: #363636;
+      color: #e5e5e5;
+    }
+    .persona-sliders {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .persona-slider-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding-top: 2px;
+    }
+    .persona-slider-label {
+      font-size: 11px;
+      color: #a3a3a3;
+      min-width: 72px;
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 24px;
+    }
+    .persona-slider-track {
+      flex: 1;
+      position: relative;
+      height: 24px;
+      display: flex;
+      align-items: flex-start;
+      padding-top: 4px;
+      cursor: pointer;
+    }
+    .persona-slider-ticks {
+      position: absolute;
+      top: 14px;
+      left: 7px;
+      right: 7px;
+      height: 14px;
+      display: flex;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .persona-slider-tick {
+      width: 1px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .persona-slider-tick::before {
+      content: '';
+      width: 1px;
+      height: 5px;
+      background: #525252;
+      flex-shrink: 0;
+    }
+    .persona-slider-tick-label {
+      font-size: 7px;
+      color: #585858;
+      margin-top: 1px;
+      line-height: 1;
+    }
+    .persona-slider-track input[type="range"] {
+      width: 100%;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #404040;
+      border-radius: 3px;
+      outline: none;
+      margin: 0;
+      position: relative;
+      z-index: 1;
+    }
+    .persona-slider-track input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      background: #e5e5e5;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      transition: transform 0.15s;
+      position: relative;
+      z-index: 2;
+    }
+    .persona-slider-track input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+    }
+    .persona-slider-value {
+      display: none;
+    }
+    .persona-slider-tooltip {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1a1a;
+      color: #a3a3a3;
+      font-size: 10px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid #404040;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10;
+    }
+    .persona-slider-track:hover .persona-slider-tooltip {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -745,6 +928,58 @@
       <button type="button" id="btn-add-task" class="tasks-add-btn" title="Create new task">+</button>
     </div>
     <div id="tasks-list" class="tasks-list"></div>
+  </div>
+
+  <div class="personas-panel">
+    <div class="personas-header">
+      <span class="personas-title">USER PERSONAS</span>
+    </div>
+    <div class="personas-controls">
+      <select id="persona-select" class="persona-select"></select>
+      <button type="button" id="btn-add-persona" class="persona-add-btn" title="Duplicate as custom persona">+</button>
+    </div>
+    <div class="persona-sliders">
+      <div class="persona-slider-row" data-char="predictiveness">
+        <span class="persona-slider-label" title="How far ahead the user looks when planning cursor movement">Predictiveness</span>
+        <div class="persona-slider-track">
+          <input type="range" id="slider-predictiveness" min="1" max="10" step="1" value="5">
+          <div class="persona-slider-ticks"><span class="persona-slider-tick"><span class="persona-slider-tick-label">1</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">5</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">10</span></span></div>
+          <div class="persona-slider-tooltip" id="tooltip-predictiveness"></div>
+        </div>
+      </div>
+      <div class="persona-slider-row" data-char="constraint">
+        <span class="persona-slider-label" title="How strongly the user avoids boundaries and follows constraint paths">Awareness</span>
+        <div class="persona-slider-track">
+          <input type="range" id="slider-constraint" min="1" max="10" step="1" value="5">
+          <div class="persona-slider-ticks"><span class="persona-slider-tick"><span class="persona-slider-tick-label">1</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">5</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">10</span></span></div>
+          <div class="persona-slider-tooltip" id="tooltip-constraint"></div>
+        </div>
+      </div>
+      <div class="persona-slider-row" data-char="speed">
+        <span class="persona-slider-label" title="Desired cursor movement speed and how aggressively the user tracks it">Speed</span>
+        <div class="persona-slider-track">
+          <input type="range" id="slider-speed" min="1" max="10" step="1" value="5">
+          <div class="persona-slider-ticks"><span class="persona-slider-tick"><span class="persona-slider-tick-label">1</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">5</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">10</span></span></div>
+          <div class="persona-slider-tooltip" id="tooltip-speed"></div>
+        </div>
+      </div>
+      <div class="persona-slider-row" data-char="smoothness">
+        <span class="persona-slider-label" title="How smooth and steady the cursor trajectory is (less jerk, less motor noise)">Smoothness</span>
+        <div class="persona-slider-track">
+          <input type="range" id="slider-smoothness" min="1" max="10" step="1" value="5">
+          <div class="persona-slider-ticks"><span class="persona-slider-tick"><span class="persona-slider-tick-label">1</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">5</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">10</span></span></div>
+          <div class="persona-slider-tooltip" id="tooltip-smoothness"></div>
+        </div>
+      </div>
+      <div class="persona-slider-row" data-char="arm">
+        <span class="persona-slider-label" title="Physical forearm length of the user, affecting movement dynamics">Arm Length</span>
+        <div class="persona-slider-track">
+          <input type="range" id="slider-arm" min="1" max="10" step="1" value="5">
+          <div class="persona-slider-ticks"><span class="persona-slider-tick"><span class="persona-slider-tick-label">1</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">5</span></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"></span><span class="persona-slider-tick"><span class="persona-slider-tick-label">10</span></span></div>
+          <div class="persona-slider-tooltip" id="tooltip-arm"></div>
+        </div>
+      </div>
+    </div>
   </div>
   
   <div class="section">

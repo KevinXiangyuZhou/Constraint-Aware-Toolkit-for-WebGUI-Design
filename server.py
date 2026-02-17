@@ -53,6 +53,7 @@ class Viewport(BaseModel):
 
 class SimulateRequest(BaseModel):
     task: TaskConfig
+    user_config: Optional[Dict[str, Any]] = None
     cookies: Optional[List[Cookie]] = None
     viewport: Viewport
     url: Optional[str] = None
@@ -119,9 +120,22 @@ async def simulate(request: SimulateRequest):
             json.dump(task_data, f, indent=2)
             temp_task_file = f.name
         
+        # Write user config to temp file if provided
+        temp_user_config_file = None
+        if request.user_config:
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.json',
+                delete=False
+            ) as uf:
+                json.dump(request.user_config, uf, indent=2)
+                temp_user_config_file = uf.name
+
         try:
-            # Initialize simulator
-            simulator = CursorSimulator()
+            # Initialize simulator with persona config (or default)
+            simulator = CursorSimulator(
+                user_config=temp_user_config_file if temp_user_config_file else None
+            )
             
             # Generate trajectory
             trajectory = simulator.generate_trajectory_with_waypoints(
@@ -157,9 +171,11 @@ async def simulate(request: SimulateRequest):
             )
             
         finally:
-            # Clean up temporary file
+            # Clean up temporary files
             if os.path.exists(temp_task_file):
                 os.unlink(temp_task_file)
+            if temp_user_config_file and os.path.exists(temp_user_config_file):
+                os.unlink(temp_user_config_file)
                 
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=f"Simulator error: {str(e)}")
