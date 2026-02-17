@@ -1,15 +1,15 @@
 {
-  "_description": "Gamer / Power user — fast, precise, long planning horizon, low noise",
+  "_description": "Gamer / Power user — fast, precise, long planning horizon, sharp decisive moves",
   "Tp": 0.05,
-  "Th": 0.4,
-  "nc": [0.10, 0.01],
+  "Th": 0.50,
+  "nc": [0.10, 0.010],
   "forearm": 0.36,
   "planner_weights": {
-    "jerk": 0.5e-06,
-    "progress": 0.5e-06,
-    "wall": 40,
-    "contour": 15,
-    "lag": 0.10,
-    "desired_speed": 0.35
+    "jerk": 1e-06,
+    "progress": 5e-06,
+    "wall": 20,
+    "contour": 10,
+    "lag": 1.0,
+    "desired_speed": 0.30
   }
 }

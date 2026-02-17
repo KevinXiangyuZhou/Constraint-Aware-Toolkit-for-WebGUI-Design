@@ -1,15 +1,15 @@
 {
-  "_description": "Fatigued user — moderate speed, elevated noise, degraded motor smoothness",
+  "_description": "Fatigued user — reduced speed, elevated noise, degraded motor smoothness",
   "Tp": 0.05,
-  "Th": 0.2,
-  "nc": [0.30, 0.06],
-  "forearm": 0.357,
+  "Th": 0.20,
+  "nc": [0.30, 0.030],
+  "forearm": 0.35,
   "planner_weights": {
-    "jerk": 0.8e-06,
-    "progress": 0.08e-06,
-    "wall": 60,
-    "contour": 15,
-    "lag": 0.03,
-    "desired_speed": 0.12
+    "jerk": 2e-06,
+    "progress": 1e-07,
+    "wall": 50,
+    "contour": 5,
+    "lag": 0.5,
+    "desired_speed": 0.15
   }
 }

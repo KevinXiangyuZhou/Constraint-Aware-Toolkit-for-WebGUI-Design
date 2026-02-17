@@ -1,15 +1,15 @@
 {
-  "_description": "User with motor impairment — very slow, very high noise, cannot enforce smooth plans",
+  "_description": "User with motor impairment — very slow, high noise, cannot enforce smooth plans, very cautious near walls",
   "Tp": 0.05,
-  "Th": 0.2,
-  "nc": [0.50, 0.15],
-  "forearm": 0.357,
+  "Th": 0.15,
+  "nc": [0.40, 0.040],
+  "forearm": 0.35,
   "planner_weights": {
-    "jerk": 0.3e-06,
-    "progress": 0.02e-06,
-    "wall": 150,
-    "contour": 40,
-    "lag": 0.01,
-    "desired_speed": 0.04
+    "jerk": 1e-07,
+    "progress": 1e-08,
+    "wall": 100,
+    "contour": 50,
+    "lag": 5.0,
+    "desired_speed": 0.10
   }
 }
