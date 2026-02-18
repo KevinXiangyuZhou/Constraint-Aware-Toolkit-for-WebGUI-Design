@@ -56,17 +56,28 @@ function generateItemId() {
   return 'item-' + (state.nextItemId++);
 }
 
+// URL helpers for cross-page filtering
+function currentPageUrl() {
+  return window.location.href.split('#')[0];
+}
+function pageUrlMatches(itemPageUrl) {
+  if (!itemPageUrl) return true;
+  return itemPageUrl.split('#')[0] === currentPageUrl();
+}
+
 // Rebuild waypoints/constraints arrays from items list
 function syncStateFromItems() {
   state.waypoints = [];
   state.constraints = [];
   for (const item of state.items) {
     if (item.type === 'waypoint' || item.type === 'waypoint_click') {
+      if (!pageUrlMatches(item.data.pageUrl)) continue;
       item.data.pixelX = item.data.x * state.screenWidth;
       item.data.pixelY = item.data.y * state.screenHeight;
       item.data._isClick = item.type === 'waypoint_click';
       state.waypoints.push(item.data);
     } else if (item.type === 'constraint') {
+      if (!pageUrlMatches(item.data.pageUrl)) continue;
       item.data._enabled = item.enabled !== false;
       state.constraints.push(item.data);
     }
@@ -181,7 +192,8 @@ function finalizePathConstraint() {
     type: 'path',
     path,
     width: state.pathDefaultWidth,
-    constraintType: state.pathConstraintType || 'keep-in'
+    constraintType: state.pathConstraintType || 'keep-in',
+    pageUrl: window.location.href
   };
   const item = { id: generateItemId(), type: 'constraint', data: pathConstraint, enabled: true };
   state.items.push(item);
@@ -270,7 +282,8 @@ function addWaypoint(x, y) {
     x: x / state.screenWidth,
     y: y / state.screenHeight,
     pixelX: x,
-    pixelY: y
+    pixelY: y,
+    pageUrl: window.location.href
   };
   const item = { id: generateItemId(), type: 'waypoint', data: normalized, enabled: true };
   state.items.push(item);
@@ -333,8 +346,59 @@ function getXPath(el) {
   return '/' + parts.join('/');
 }
 
+// Determine if an element (or one of its ancestors) is a clickable/interactive element
+function isClickableElement(el) {
+  if (!el || el === document.documentElement || el === document.body) return false;
+  let cur = el;
+  while (cur && cur !== document.body) {
+    const tag = cur.tagName;
+    if (tag === 'A' && cur.hasAttribute('href')) return true;
+    if (tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'SUMMARY') return true;
+    if (tag === 'INPUT' && cur.type !== 'hidden') return true;
+    if (tag === 'LABEL' && cur.hasAttribute('for')) return true;
+    const role = cur.getAttribute('role');
+    if (role && ['button', 'link', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'switch', 'checkbox', 'radio'].includes(role)) return true;
+    if (cur.hasAttribute('onclick') || cur.hasAttribute('tabindex')) return true;
+    try { if (getComputedStyle(cur).cursor === 'pointer') return true; } catch (_) {}
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+// Search for a clickable element at (x,y) and nearby points within radius
+function findClickableNear(x, y, radius) {
+  const el = document.elementFromPoint(x, y);
+  if (isClickableElement(el)) return el;
+  const offsets = [-radius, -radius / 2, 0, radius / 2, radius];
+  for (const dx of offsets) {
+    for (const dy of offsets) {
+      if (dx === 0 && dy === 0) continue;
+      const candidate = document.elementFromPoint(x + dx, y + dy);
+      if (candidate && candidate !== el && isClickableElement(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function showClickWarning() {
+  if (!state.overlay) return;
+  let toast = state.overlay.querySelector('.click-warning-toast');
+  if (toast) toast.remove();
+  toast = document.createElement('div');
+  toast.className = 'click-warning-toast';
+  toast.style.cssText = 'position:fixed;top:52px;left:50%;transform:translateX(-50%);background:rgba(234,88,12,0.92);color:#fff;padding:8px 18px;border-radius:8px;font-family:sans-serif;font-size:13px;z-index:2147483648;pointer-events:none;transition:opacity 0.4s;';
+  toast.textContent = 'No clickable element found near cursor. Please try again on a link or button.';
+  state.overlay.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+  setTimeout(() => { toast.remove(); }, 3000);
+}
+
 // Click waypoint management
 function addClickWaypoint(x, y) {
+  if (!findClickableNear(x, y, 20)) {
+    showClickWarning();
+    return;
+  }
   const el = document.elementFromPoint(x, y);
   const selector = el ? getStableSelector(el) : '';
   const xpath = el ? getXPath(el) : '';
@@ -349,12 +413,22 @@ function addClickWaypoint(x, y) {
     boundingBox: { x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height },
     pageUrl: window.location.href,
     dwellMs: 200,
-    toleranceRadiusPx: 10
+    toleranceRadiusPx: 50
   };
   const item = { id: generateItemId(), type: 'waypoint_click', data: data, enabled: true };
   state.items.push(item);
+
+  // If the clicked element is (or is inside) an anchor with an href, auto-append a goto item
+  const anchor = el ? el.closest('a[href]') : null;
+  let gotoItem = null;
+  if (anchor && anchor.href) {
+    gotoItem = { id: generateItemId(), type: 'goto', data: { url: anchor.href }, enabled: true };
+    state.items.push(gotoItem);
+  }
+
   syncStateFromItems();
   state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
+  if (gotoItem) state.undoStack.push({ itemId: gotoItem.id, itemCopy: JSON.parse(JSON.stringify(gotoItem)) });
   state.redoStack = [];
   renderOverlay();
   try {
@@ -364,11 +438,19 @@ function addClickWaypoint(x, y) {
       waypointCount: state.waypoints.length,
       constraintCount: state.constraints.length
     });
+    if (gotoItem) {
+      chrome.runtime.sendMessage({
+        type: 'itemAdded',
+        item: gotoItem,
+        waypointCount: state.waypoints.length,
+        constraintCount: state.constraints.length
+      });
+    }
   } catch (_) {}
 }
 
 function clearWaypoints() {
-  state.items = state.items.filter(i => i.type !== 'waypoint' && i.type !== 'waypoint_click');
+  state.items = state.items.filter(i => i.type !== 'waypoint' && i.type !== 'waypoint_click' && i.type !== 'goto');
   syncStateFromItems();
   renderOverlay();
   notifyItemsChanged();
@@ -406,7 +488,8 @@ function finishConstraint(x, y, constraintType = 'keep-in') {
     y: py / state.screenHeight,
     width: w / state.screenWidth,
     height: h / state.screenHeight,
-    constraintType: constraintType
+    constraintType: constraintType,
+    pageUrl: window.location.href
   };
   
   const item = { id: generateItemId(), type: 'constraint', data: normalized, enabled: true };
@@ -682,13 +765,14 @@ function renderOverlay() {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Draw click ring indicator
+    // Draw click tolerance ring indicator (matches replay toleranceRadiusPx)
     if (isClick) {
+      const toleranceRadius = Math.max(11, Number(wp.toleranceRadiusPx) || 0);
       ctx.strokeStyle = '#a855f7';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([3, 2]);
       ctx.beginPath();
-      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.arc(x, y, toleranceRadius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -1259,6 +1343,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.useDebugger = !!message.enabled;
       sendResponse({ success: true });
       break;
+    case 'resetCursorPosition':
+      createOverlay();
+      showGhostCursor(message.x, message.y);
+      sendResponse({ success: true });
+      break;
     case 'loadReplaySegment': {
       // Plays a trajectory segment, optionally ending with a dwell-then-click
       // message: { trajectory: [[x,y,t],...], clickTarget?: { x, y, dwellMs, toleranceRadiusPx, selector, xpath, itemId } }
@@ -1348,6 +1437,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }, state.nextItemId);
       state.nextItemId = maxId;
       syncStateFromItems();
+      if (state.waypoints.length > 0 || state.constraints.length > 0) {
+        createOverlay();
+      }
       renderOverlay();
       sendResponse({ success: true });
       break;
@@ -1392,3 +1484,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Initialize
 setMode('passthrough');
+try {
+  chrome.runtime.sendMessage({ type: 'contentScriptReady', url: window.location.href });
+} catch (_) {}

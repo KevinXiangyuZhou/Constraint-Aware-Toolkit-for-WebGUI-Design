@@ -519,6 +519,21 @@ function createTask(name) {
   return task;
 }
 
+let gotoItemCounter = 0;
+function makeGotoItem(url) {
+  return { id: 'goto-' + Date.now() + '-' + (gotoItemCounter++), type: 'goto', data: { url: url || '' }, enabled: true };
+}
+
+async function insertInitialGoto(task) {
+  try {
+    const tab = await getCurrentTab();
+    if (tab?.url) {
+      const item = makeGotoItem(tab.url);
+      task.items.unshift(item);
+    }
+  } catch (_) {}
+}
+
 async function saveActiveTaskState() {
   if (!activeTaskId) return;
   const task = tasks.find(t => t.id === activeTaskId);
@@ -537,12 +552,13 @@ async function addNewTask() {
   await saveActiveTaskState();
 
   const task = createTask();
+  await insertInitialGoto(task);
   activeTaskId = task.id;
 
   try {
     await sendToContentScript({
       type: 'loadTaskState',
-      items: [],
+      items: task.items,
       undoStack: [],
       redoStack: []
     });
@@ -596,11 +612,12 @@ async function deleteTask(taskId) {
       await switchToTask(tasks[nextIdx].id);
     } else {
       const task = createTask();
+      await insertInitialGoto(task);
       activeTaskId = task.id;
       try {
         await sendToContentScript({
           type: 'loadTaskState',
-          items: [],
+          items: task.items,
           undoStack: [],
           redoStack: []
         });
@@ -750,6 +767,15 @@ function renderTasksList() {
     let cNum = 0;
     let clickNum = 0;
 
+    // Determine the first page URL in the task for comparison
+    const firstPageUrl = (() => {
+      for (const it of task.items) {
+        const u = it.data?.pageUrl || it.data?.url;
+        if (u) return u.split('#')[0];
+      }
+      return null;
+    })();
+
     task.items.forEach(item => {
       const row = document.createElement('div');
       row.className = 'task-item-row';
@@ -777,6 +803,13 @@ function renderTasksList() {
         icon.textContent = '\u25CF';
         label.textContent = 'Click ' + clickNum;
         if (item.data?.selector) label.title = item.data.selector;
+      } else if (item.type === 'goto') {
+        icon.classList.add('goto-icon');
+        icon.textContent = '\u2192';
+        const displayUrl = item.data?.url || '';
+        const shortUrl = displayUrl.length > 40 ? displayUrl.slice(0, 37) + '\u2026' : displayUrl;
+        label.textContent = 'Go to ' + shortUrl;
+        label.title = displayUrl;
       } else {
         cNum++;
         const isKeepOut = item.data?.constraintType === 'keep-out';
@@ -792,6 +825,18 @@ function renderTasksList() {
       row.appendChild(handle);
       row.appendChild(icon);
       row.appendChild(label);
+
+      // Show a small hostname badge if this item is from a different page
+      const itemUrl = item.data?.pageUrl || (item.type === 'goto' ? item.data?.url : null);
+      if (itemUrl && firstPageUrl && itemUrl.split('#')[0] !== firstPageUrl) {
+        try {
+          const badge = document.createElement('span');
+          badge.className = 'item-page-badge';
+          badge.textContent = new URL(itemUrl).hostname;
+          badge.title = itemUrl;
+          row.appendChild(badge);
+        } catch (_) {}
+      }
 
       // Constraint toggle
       if (item.type === 'constraint') {
@@ -1162,6 +1207,30 @@ function buildTaskConfig(taskData, viewportW, viewportH) {
   return { taskConfig, clickMap };
 }
 
+// Split a task's items into per-page groups at goto boundaries.
+// Each group has its own taskConfig, clickMap, and allWaypoints for independent simulation.
+function buildPageGroups(taskData, viewportW, viewportH) {
+  const groups = [];
+  let currentGroup = null;
+
+  for (const item of taskData.items) {
+    if (item.type === 'goto') {
+      currentGroup = { gotoUrl: item.data.url, items: [] };
+      groups.push(currentGroup);
+    } else if (currentGroup) {
+      currentGroup.items.push(item);
+    } else {
+      currentGroup = { gotoUrl: null, items: [item] };
+      groups.push(currentGroup);
+    }
+  }
+
+  return groups.map(g => {
+    const { taskConfig, clickMap } = buildTaskConfig({ items: g.items }, viewportW, viewportH);
+    return { gotoUrl: g.gotoUrl, taskConfig, clickMap, allWaypoints: taskConfig.waypoints };
+  });
+}
+
 // Check trajectory for constraint violations.
 // Returns { violated: boolean, count: number } where count = number of trajectory points violating any constraint.
 function checkViolations(trajectory, taskConfig) {
@@ -1296,42 +1365,74 @@ btnSimulate.addEventListener('click', async () => {
     tabUrl = tab.url;
   } catch (_) {}
 
-  // Execute all simulations sequentially
+  // Execute all simulations sequentially — per-page simulation
   for (let ti = 0; ti < experimentResults.length; ti++) {
     const taskRes = experimentResults[ti];
     const taskData = tasks.find(tt => tt.id === taskRes.taskId);
     if (!taskData) continue;
-    const { taskConfig, clickMap } = buildTaskConfig(taskData, viewportW, viewportH);
+    const pageGroups = buildPageGroups(taskData, viewportW, viewportH);
 
     for (let si = 0; si < taskRes.sims.length; si++) {
       const sim = taskRes.sims[si];
-      sim.clickMap = clickMap;
+      sim.pageGroups = pageGroups;
 
       for (let ri = 0; ri < sim.rounds.length; ri++) {
         const round = sim.rounds[ri];
         round.status = 'running';
         round.clickResults = [];
         round.pageJumps = [];
+        round.pageTrajectories = [];
         renderResults();
 
-        try {
-          const result = await runSingleSim(
-            taskConfig, sim.personaCfg, round.seed,
-            cookies, { width: viewportW, height: viewportH }, tabUrl
-          );
-          if (result.success && result.trajectory) {
-            round.trajectory = result.trajectory;
-            round.duration = result.total_duration ?? (result.trajectory.length > 0 ? result.trajectory[result.trajectory.length - 1][2] : 0);
-            round.violations = checkViolations(result.trajectory, taskConfig);
-            round.status = 'done';
-          } else {
-            round.status = 'error';
-            round.error = result.error || 'Unknown error';
+        let allTrajectoryPoints = [];
+        let totalDuration = 0;
+        let failed = false;
+
+        for (let pgIdx = 0; pgIdx < pageGroups.length; pgIdx++) {
+          const pg = pageGroups[pgIdx];
+          if (pg.taskConfig.waypoints.length < 2) {
+            round.pageTrajectories.push({
+              gotoUrl: pg.gotoUrl, trajectory: [], clickMap: pg.clickMap,
+              allWaypoints: pg.allWaypoints, duration: 0,
+              violations: { violated: false, count: 0 }
+            });
+            continue;
           }
-        } catch (err) {
-          round.status = 'error';
-          round.error = err.message;
+          try {
+            const result = await runSingleSim(
+              pg.taskConfig, sim.personaCfg, round.seed + pgIdx,
+              cookies, { width: viewportW, height: viewportH }, tabUrl
+            );
+            if (result.success && result.trajectory) {
+              const traj = result.trajectory;
+              const dur = result.total_duration ?? (traj.length > 0 ? traj[traj.length - 1][2] : 0);
+              round.pageTrajectories.push({
+                gotoUrl: pg.gotoUrl, trajectory: traj, clickMap: pg.clickMap,
+                allWaypoints: pg.allWaypoints, duration: dur,
+                violations: checkViolations(traj, pg.taskConfig)
+              });
+              allTrajectoryPoints.push(...traj);
+              totalDuration += dur;
+            } else {
+              failed = true;
+              round.error = result.error || 'Unknown error';
+              break;
+            }
+          } catch (err) {
+            failed = true;
+            round.error = err.message;
+            break;
+          }
+          renderResults();
         }
+
+        round.trajectory = allTrajectoryPoints;
+        round.duration = totalDuration;
+        round.violations = {
+          violated: round.pageTrajectories.some(p => p.violations?.violated),
+          count: round.pageTrajectories.reduce((s, p) => s + (p.violations?.count || 0), 0)
+        };
+        round.status = failed ? 'error' : 'done';
         renderResults();
       }
     }
@@ -1369,7 +1470,6 @@ function buildSegmentPlan(trajectory, clickMap) {
   for (const { idx, cm } of splitIndices) {
     const end = Math.min(idx + 1, trajectory.length);
     const slice = trajectory.slice(start, end);
-    // Re-base timestamps to start from 0
     const t0 = slice.length > 0 ? slice[0][2] : 0;
     const rebased = slice.map(([x, y, t]) => [x, y, t - t0]);
     segments.push({
@@ -1432,10 +1532,22 @@ function waitForTabLoad(timeoutMs = 15000) {
 
 let playbackAborted = false;
 
+async function sendTaskItemsWithRetry(items, maxRetries = 5, delayMs = 400) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await sendToContentScript({ type: 'loadTaskState', items, undoStack: [], redoStack: [] });
+      return true;
+    } catch (_) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  return false;
+}
+
 async function playRound(taskIdx, simIdx, roundIdx) {
   const sim = experimentResults[taskIdx]?.sims[simIdx];
   const round = sim?.rounds[roundIdx];
-  if (!round || !round.trajectory) return;
+  if (!round || !round.pageTrajectories || round.pageTrajectories.length === 0) return;
 
   if (playingRoundRef) { await stopPlayback(); }
 
@@ -1444,67 +1556,106 @@ async function playRound(taskIdx, simIdx, roundIdx) {
   playbackAborted = false;
   renderResults();
 
-  const clickMap = sim.clickMap || [];
-  const segments = buildSegmentPlan(round.trajectory, clickMap);
-
+  const replayTaskData = tasks.find(tt => tt.id === experimentResults[taskIdx]?.taskId);
   round.clickResults = [];
   round.pageJumps = [];
   const tab = await getCurrentTab();
   if (tab?.url) round.pageJumps.push(tab.url);
 
-  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+  for (let pgIdx = 0; pgIdx < round.pageTrajectories.length; pgIdx++) {
     if (playbackAborted) break;
-    const seg = segments[segIdx];
-    if (seg.trajectory.length === 0 && !seg.clickTarget) continue;
+    const pg = round.pageTrajectories[pgIdx];
 
-    try {
-      if (seg.clickTarget) {
-        // Send segment with click target — wait for clickFired
-        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory, clickTarget: seg.clickTarget });
-        const clickMsg = await waitForMessage('clickFired', 30000);
-        const result = clickMsg.result || {};
-        const preUrl = (await getCurrentTab())?.url || '';
-        round.clickResults.push({
-          waypointId: seg.clickTarget.itemId,
-          success: result.success,
-          preClickUrl: preUrl,
-          postClickUrl: preUrl,
-          loadDurationMs: 0,
-          failureReason: result.failureReason || null
-        });
+    // Navigate to the page group's URL if needed
+    if (pg.gotoUrl) {
+      const curTab = await getCurrentTab();
+      const targetUrl = pg.gotoUrl.split('#')[0];
+      const currentUrl = curTab?.url?.split('#')[0] || '';
+      if (targetUrl && targetUrl !== currentUrl) {
+        try {
+          await chrome.tabs.update(curTab.id, { url: pg.gotoUrl });
+          const newUrl = await waitForTabLoad(15000);
+          if (newUrl) round.pageJumps.push(newUrl);
+          // Wait for content script re-injection + page rendering
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (navErr) {
+          console.error('Page group navigation error:', navErr);
+          break;
+        }
+      }
+    }
 
-        if (result.success) {
-          // Wait briefly to see if navigation happens
-          const navStart = Date.now();
-          try {
-            const newUrl = await waitForTabLoad(15000);
-            const loadDuration = Date.now() - navStart;
-            const lastClick = round.clickResults[round.clickResults.length - 1];
-            lastClick.postClickUrl = newUrl;
-            lastClick.loadDurationMs = loadDuration;
-            if (newUrl !== preUrl) round.pageJumps.push(newUrl);
-            // Small delay for content script to re-inject
-            await new Promise(r => setTimeout(r, 500));
-          } catch (navErr) {
-            // No navigation or timeout — that's OK, continue
-            if (navErr.message === 'navigation_timeout') {
+    // Send task items so the overlay shows the current page's items
+    if (replayTaskData) {
+      await sendTaskItemsWithRetry(replayTaskData.items);
+    }
+
+    // Allow the page to settle before starting segment replay
+    await new Promise(r => setTimeout(r, 500));
+
+    if (pg.trajectory.length === 0) continue;
+
+    // Build segment plan for this page group's trajectory
+    const segments = buildSegmentPlan(pg.trajectory, pg.clickMap || []);
+
+    for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+      if (playbackAborted) break;
+      const seg = segments[segIdx];
+      if (seg.trajectory.length === 0 && !seg.clickTarget) continue;
+
+      try {
+        if (seg.clickTarget) {
+          await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory, clickTarget: seg.clickTarget });
+          const clickMsg = await waitForMessage('clickFired', 30000);
+          const result = clickMsg.result || {};
+          const preUrl = (await getCurrentTab())?.url || '';
+          round.clickResults.push({
+            waypointId: seg.clickTarget.itemId,
+            success: result.success,
+            preClickUrl: preUrl,
+            postClickUrl: preUrl,
+            loadDurationMs: 0,
+            failureReason: result.failureReason || null
+          });
+
+          if (result.success) {
+            const navStart = Date.now();
+            try {
+              const newUrl = await waitForTabLoad(15000);
+              const loadDuration = Date.now() - navStart;
               const lastClick = round.clickResults[round.clickResults.length - 1];
-              lastClick.failureReason = 'navigation_timeout';
+              lastClick.postClickUrl = newUrl;
+              lastClick.loadDurationMs = loadDuration;
+              if (newUrl !== preUrl) round.pageJumps.push(newUrl);
+              // Wait for content script re-injection + page rendering
+              await new Promise(r => setTimeout(r, 1000));
+
+              // Send task items so the new page's overlay shows its items
+              if (newUrl !== preUrl && replayTaskData) {
+                await sendTaskItemsWithRetry(replayTaskData.items);
+                await new Promise(r => setTimeout(r, 500));
+              }
+            } catch (navErr) {
+              if (navErr.message === 'navigation_timeout') {
+                const lastClick = round.clickResults[round.clickResults.length - 1];
+                lastClick.failureReason = 'navigation_timeout';
+              }
             }
           }
+        } else {
+          await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory });
+          await waitForMessage('segmentComplete', 60000);
         }
-      } else {
-        // Simple segment without click — wait for segmentComplete
-        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory });
-        await waitForMessage('segmentComplete', 60000);
+      } catch (err) {
+        console.error('Segment playback error:', err);
+        break;
       }
-    } catch (err) {
-      console.error('Segment playback error:', err);
-      break;
+      renderResults();
     }
-    renderResults();
   }
 
+  // Clean up: hide ghost cursor and stop replay state in content script
+  try { await sendToContentScript({ type: 'stopReplay' }); } catch (_) {}
   playingRoundRef = null;
   isReplaying = false;
   renderResults();
@@ -1688,6 +1839,32 @@ function renderResults() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
+    case 'contentScriptReady': {
+      // During replay, send the replay task's items (not the active task)
+      let itemsToSend = null;
+      if (playingRoundRef) {
+        const replayTask = tasks.find(t => t.id === experimentResults[playingRoundRef.taskIdx]?.taskId);
+        if (replayTask) itemsToSend = replayTask.items;
+      }
+      if (!itemsToSend) {
+        const task = tasks.find(t => t.id === activeTaskId);
+        if (task) itemsToSend = task.items;
+      }
+      if (itemsToSend) {
+        sendToContentScript({
+          type: 'loadTaskState',
+          items: itemsToSend,
+          undoStack: [],
+          redoStack: []
+        }).then(async () => {
+          if (!playingRoundRef) {
+            const st = await sendToContentScript({ type: 'getState' });
+            if (st) { updateCountsFromState(st); }
+          }
+        }).catch(() => {});
+      }
+      break;
+    }
     case 'modeChanged':
       currentMode = message.mode;
       updateModeButtons(message.mode);
@@ -1703,7 +1880,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       constraintCountSpan.textContent = constraintCount;
       btnUndo.disabled = false;
       btnRedo.disabled = true;
-      updateStatus(`${message.item?.type === 'waypoint' ? 'Waypoint' : 'Constraint'} added`, 'success');
+      const addedType = message.item?.type;
+      const typeLabel = addedType === 'waypoint' ? 'Waypoint' : addedType === 'waypoint_click' ? 'Click waypoint' : addedType === 'goto' ? 'Go-to' : 'Constraint';
+      updateStatus(`${typeLabel} added`, 'success');
       renderTasksList();
       renderExpChecks();
       break;
@@ -1828,6 +2007,7 @@ document.addEventListener('keyup', (e) => {
 
   // Create default "Task 1" and set as active
   const defaultTask = createTask();
+  await insertInitialGoto(defaultTask);
   activeTaskId = defaultTask.id;
   renderTasksList();
 
@@ -1848,9 +2028,10 @@ document.addEventListener('keyup', (e) => {
         corridorWidthSlider.value = Math.max(5, Math.min(80, px));
         updateCorridorWidthLabel();
       }
-      // Sync existing items into the default task
+      // Sync existing items into the default task (preserve the goto we just inserted)
       if (st.items && st.items.length > 0) {
-        defaultTask.items = st.items;
+        const gotoItems = defaultTask.items.filter(i => i.type === 'goto');
+        defaultTask.items = [...gotoItems, ...st.items];
         defaultTask.undoStack = st.undoStack || [];
         defaultTask.redoStack = st.redoStack || [];
         renderTasksList();
