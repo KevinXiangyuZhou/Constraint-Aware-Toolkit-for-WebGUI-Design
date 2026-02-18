@@ -39,6 +39,7 @@ class TaskConfig(BaseModel):
     screen_width: int
     screen_height: int
     constraints: Optional[Dict[str, Any]] = None
+    click_target_radius_px: Optional[float] = None
 
 
 class Cookie(BaseModel):
@@ -153,11 +154,17 @@ async def simulate(request: SimulateRequest):
                 user_config=temp_user_config_file if temp_user_config_file else None
             )
             
-            # Generate trajectory
+            # Convert click target radius from pixels to normalized meters if provided
+            sim_target_radius = 0.01  # default
+            if request.task.click_target_radius_px is not None:
+                screen_width_m = 0.46
+                sim_target_radius = request.task.click_target_radius_px / request.task.screen_width * screen_width_m
+
             trajectory = simulator.generate_trajectory_with_waypoints(
                 task_file=temp_task_file,
                 use_optimal_path=True,
-                return_timestamps=False  # We'll convert delays to timestamps ourselves
+                return_timestamps=False,
+                target_radius=sim_target_radius
             )
             
             # Convert delays to timestamps and format for frontend

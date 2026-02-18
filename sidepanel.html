@@ -150,6 +150,7 @@
     
     .tool-btn-keepin .icon { background: rgba(59, 130, 246, 0.12); }
     .tool-btn-click .icon { background: rgba(168, 85, 247, 0.12); }
+    .tool-btn-goto .icon { background: rgba(100, 116, 139, 0.14); }
     .tool-btn-keepout .icon { background: rgba(239, 68, 68, 0.12); }
     .tool-btn-accent .icon { background: rgba(96, 165, 250, 0.12); }
     .tool-btn-danger .icon { background: rgba(239, 68, 68, 0.12); }
@@ -1031,6 +1032,10 @@
           <span>Click</span>
           <span class="shortcut">E</span>
         </button>
+        <button type="button" id="btn-add-goto" class="tool-btn tool-btn-goto" title="Add go-to URL action">
+          <span class="icon icon-square"><i data-lucide="link"></i></span>
+          <span>Go-to URL</span>
+        </button>
       </div>
     </div>
     
@@ -1201,6 +1206,11 @@
   </div>
   
   <script src="lucide.min.js"></script>
-  <script src="sidepanel.js"></script>
+  <script src="sidepanel/globals.js"></script>
+  <script src="sidepanel/personas.js"></script>
+  <script src="sidepanel/tasks.js"></script>
+  <script src="sidepanel/experiment.js"></script>
+  <script src="sidepanel/playback.js"></script>
+  <script src="sidepanel/init.js"></script>
 </body>
 </html>
