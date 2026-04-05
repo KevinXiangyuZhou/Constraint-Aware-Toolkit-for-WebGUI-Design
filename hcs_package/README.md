@@ -82,7 +82,7 @@ Generate a trajectory following waypoints with optional constraints and optimal 
     "default_margin": 0.005,
     "regions": [
       {
-        "constraint_type": "keep_out",
+        "constraint_type": "keep_in",
         "geometry": {
           "type": "circle",
           "center": [0.3, 0.2],

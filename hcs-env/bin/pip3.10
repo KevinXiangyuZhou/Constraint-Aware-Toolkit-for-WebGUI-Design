@@ -1,4 +1,4 @@
-#!/Users/xiangyz/Desktop/Constraint-Aware-Toolkit-for-WebGUI-Design/hcs-env/bin/python3
+#!/Users/xiangyz/Desktop/Constraint-Aware-Toolkit-for-WebGUI-Design/hcs-env/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
