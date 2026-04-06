@@ -7,7 +7,8 @@ and functions for generating optimal reference paths within tunnels.
 
 import numpy as np
 from scipy.interpolate import splprep, splev
-from scipy.optimize import minimize
+from scipy.ndimage import gaussian_filter1d
+from .adapt import compute_local_curvature_integral, compute_qp_bounds, compute_clearance_profile
 
 
 class ReferencePath:
@@ -352,120 +353,234 @@ def _remove_loops_from_path(path_points: np.ndarray, tol: float = 1e-6) -> np.nd
     return cleaned_path
 
 
+def _smooth_offsets(
+    d: np.ndarray,
+    s: np.ndarray,
+    lb: np.ndarray,
+    ub: np.ndarray,
+    sigma_frac: float = 0.015,
+) -> np.ndarray:
+    """Gaussian-smooth the lateral-offset profile and clip to bounds.
+
+    The kernel must be narrow relative to each turn's arc length so that
+    offsets within a single turn are preserved.  A wide kernel spans multiple
+    turns of opposite sign and cancels the offsets to near-zero.
+    sigma_frac = 0.015 means sigma ≈ 1.5% of total arc length, which blends
+    only the transition zone at inflection points (kappa sign changes).
+
+    Args:
+        d:           Raw offset profile (N,).
+        s:           Arc-length samples (N,).
+        lb, ub:      Per-knot lower/upper bounds.
+        sigma_frac:  Smoothing kernel half-width as fraction of total arc length.
+                     Keep well below (half-wavelength / arc-length) to avoid
+                     inter-turn cancellation.
+
+    Returns:
+        Smoothed offsets clipped to [lb, ub].
+    """
+    L = s[-1] - s[0]
+    sigma = max(sigma_frac * L, 1e-9)
+    n = len(d)
+    d_smooth = np.empty(n)
+    for i in range(n):
+        w = np.exp(-0.5 * ((s - s[i]) / sigma) ** 2)
+        w /= w.sum()
+        d_smooth[i] = w @ d
+    return np.clip(d_smooth, lb, ub)
+
+
 def generate_optimal_reference_path(
     tunnel_path,
     tunnel_width,
     margin=0.001,
     num_knots=None,
-    alpha=5.0,         # weight on Δd^2 (lateral slope)
-    beta=5.0,         # weight on Δ²d^2 (lateral bending)
-    lambda_length=0.01, # weight on length linear term
-    gamma_center=1e-2  # tiny center bias (keeps solution off walls unless useful)
+    w_cut=0.01,          # base corner-cutting aggressiveness (0 = stay on centerline)
+    w_suppress=0.0,      # suppression sensitivity: exp(-w_suppress * phi_k)
+                         # 0 = always cut; larger = suppress in dense/sharp regions
+    w_width_exp=1.0,     # width sensitivity exponent (0 = ignore width, 1 = linear)
+    cut_window_frac=0.05,  # window for phi_k as fraction of path length (scale-invariant)
+    global_clearance_ref=0.025,  # reference clearance for absolute task scaling (2.5cm default)
+    cartesian_constraints=None,  # List[ConstraintRegion] for constraint-aware bounds
+    corridor_bounds=None,  # Optional (left_bound, right_bound) for path-relative constraints
+    centerline_cache=None,  # Optional pre-built ReferencePath to avoid redundant spline creation
 ):
     """
-    Generate a smooth, length-efficient reference path inside the tunnel using a convex QP in d(s).
-    
+    Generate a race-tracing reference path inside the tunnel.
+
     Path model (right-normal Frenet frame):
-        p(s) = C(s) + d(s) * n_R(s)
-    With right-pointing normal n_R(s) = [t_y, -t_x].
-    
-    Length linearization (with right normal):
-        L(d) ≈ ∑ Δs_k * (1 + κ_k * d_k)   → linear term  +κ_k Δs_k · d_k
-        so f_k = +lambda_length * κ_k * Δs_k
+        p(s) = C(s) + d(s) * n_R(s),   n_R(s) = [t_y, -t_x]
+
+    n_R points to the RIGHT of travel.  Signed curvature convention:
+        kappa > 0  →  left turn  →  inside is -n_R  →  d < 0 (toward lb)
+        kappa < 0  →  right turn →  inside is +n_R  →  d > 0 (toward ub)
+
+    Corner-cutting follows the research insight that width ENABLES cutting while
+    curvature MOTIVATES it.  The desired offset at each knot is:
+
+        width_factor_k = (clearance_k / clearance_ref) ^ w_width_exp
+        kappa_factor_k = |kappa_k| / max(|kappa|)
+        cut_fraction_k = w_cut * width_factor_k * kappa_factor_k * exp(-w_suppress * phi_k)
+        d_k = cut_fraction_k * lb_k   if kappa_k >= 0   (left turn, cut left)
+            = cut_fraction_k * ub_k   if kappa_k <  0   (right turn, cut right)
+
+    This means:
+        - Narrow sections suppress cutting regardless of curvature (width_factor low)
+        - Straight sections don't cut regardless of width (kappa_factor low)
+        - Wide + curved sections allow maximum cutting (both factors high)
+
+    phi_k is the total turning angle integral |kappa| ds over a local window,
+    capturing both local sharpness and turn density in one signal.
+
+    A final cubic spline provides C2 continuity.
 
     Args:
-        tunnel_path: List[(x,y)] centerline samples (entry→exit).
-        tunnel_width: scalar width (use your per-sample width if available).
-        margin: safety margin to walls.
-        num_knots: discretization along arc length (auto if None).
-        alpha, beta, lambda_length, gamma_center: objective weights.
+        tunnel_path:           List[(x,y)] centerline samples (entry->exit).
+        tunnel_width:          Scalar corridor width (fallback when no constraints).
+        margin:                Safety margin to walls.
+        num_knots:             Discretization along arc length (auto if None).
+        w_cut:                 Cutting fraction in [0, 1].  0 = centerline,
+                               1 = cut fully to the inside wall.
+        w_suppress:            Suppression sensitivity.  0 = always cut at
+                               full w_cut fraction; larger values reduce cutting
+                               where phi_k is high (dense/sharp turns).
+        w_width_exp:           Width sensitivity exponent.  0 = ignore width
+                               (old behavior), 1 = linear scaling with clearance,
+                               >1 = only cut in very wide sections.
+        cut_window_frac:       Window for phi_k as fraction of total path length.
+                               Scale-invariant (e.g., 0.05 = 5% of path).
+        cartesian_constraints: List[ConstraintRegion] for constraint-aware bounds.
+                               Works with cascading menus and polygon keep-in regions.
+        corridor_bounds:       Optional (left_bound, right_bound) tuple for
+                               path-relative corridor constraints.
 
     Returns:
-        ReferencePath for the optimized path (spline through solved waypoints).
+        ReferencePath for the optimised path (cubic spline through waypoints).
     """
     waypoints = np.asarray(tunnel_path, dtype=float)
-    centerline = ReferencePath(waypoints, s=0.0, k=3)
+    centerline = centerline_cache if centerline_cache is not None else ReferencePath(waypoints, s=0.0, k=3)
     L = centerline.total_length
 
     # Discretize along arclength
     if num_knots is None:
-        # ~2 points per original sample, but clamp
         num_knots = max(40, min(300, 2 * len(waypoints)))
     s_knots = np.linspace(0.0, L, num_knots)
 
     # Evaluate C(s), t(s), n_R(s), κ(s)
-    C = np.stack([centerline(theta) for theta in s_knots], axis=0)            # (N,2)
-    T = np.stack([centerline.tangent(theta) for theta in s_knots], axis=0)    # (N,2)
-    N_right = np.stack([[t[1], -t[0]] for t in T], axis=0)                    # (N,2)
-    kappa = np.array([centerline.curvature(theta) for theta in s_knots])      # (N,)
-    ds = np.diff(s_knots, prepend=s_knots[0])
-    ds[0] = ds[1] if len(ds) > 1 else 0.0
+    C       = np.stack([centerline(theta) for theta in s_knots], axis=0)         # (N,2)
+    T       = np.stack([centerline.tangent(theta) for theta in s_knots], axis=0) # (N,2)
+    N_right = np.stack([[t[1], -t[0]] for t in T], axis=0)                       # (N,2)
+    kappa   = np.array([centerline.curvature(theta) for theta in s_knots])       # (N,)
+    ds      = np.diff(s_knots, prepend=s_knots[0])
+    ds[0]   = ds[1] if len(ds) > 1 else 0.0
 
-    # Corridor bounds (constant width here; replace with per-sample if you have it)
+    # Corridor bounds — symmetric half-width fallback
     half_w = np.full(num_knots, 0.5 * float(tunnel_width) - float(margin))
-    half_w = np.maximum(half_w, 1e-6)  # avoid negative/zero
+    half_w = np.maximum(half_w, 1e-6)
 
     N = num_knots
 
-    # Build finite-difference matrices
-    D1 = np.zeros((N-1, N))
-    for k in range(N-1):
-        D1[k, k]   = -1.0
-        D1[k, k+1] =  1.0
-
-    D2 = np.zeros((N-2, N))
-    for k in range(N-2):
-        D2[k, k]   =  1.0
-        D2[k, k+1] = -2.0
-        D2[k, k+2] =  1.0
-
-    # Quadratic term (PSD)
-    H = alpha * (D1.T @ D1) + beta * (D2.T @ D2) + gamma_center * np.eye(N)
-
-    # Linear term from length (RIGHT normal → +κ d)
-    f = lambda_length * (kappa * ds)
-
-    # Bounds and pinned endpoints (keep entry/exit on centerline; change if needed)
-    lb = (-half_w).copy()
-    ub = (+half_w).copy()
-    lb[0] = ub[0] = 0.0
-    lb[-1] = ub[-1] = 0.0
-    bounds = list(zip(lb, ub))
-
-    # Solve the box-constrained quadratic with L-BFGS-B
-    def objective(d):
-        return 0.5 * d @ H @ d + f @ d
-    
-    def gradient(d):
-        # analytic gradient: H d + f
-        return H @ d + f
-
-    x0 = np.zeros(N)
-    res = minimize(
-        objective, x0=np.zeros(N),
-        method='L-BFGS-B',
-        jac=gradient,                     # <<< provide gradient
-        bounds=bounds,
-        options={
-            'maxiter': 5000,              # raise caps a bit
-            'ftol': 1e-10,                # strict function tolerance
-            'gtol': 1e-8,                 # gradient norm tolerance
-            'maxls': 50                   # more line-search steps if needed
-        }
+    # Constraint-aware per-knot bounds
+    lb, ub = compute_qp_bounds(
+        centerline, s_knots, C, N_right, half_w,
+        cartesian_constraints=cartesian_constraints,
+        margin=float(margin),
     )
 
-    if not res.success:
-        # fallback to centerline offsets = 0
-        d_opt = np.zeros(N)
-    else:
-        d_opt = res.x
+    # Pin endpoints on the centerline
+    lb[0] = ub[0] = 0.0
+    lb[-1] = ub[-1] = 0.0
+
+    # Compute clearance profile — works for tunnels, cascading menus, or mixed.
+    # Clearance is the distance from centerline to nearest constraint boundary.
+    clearance = compute_clearance_profile(
+        centerline, s_knots,
+        corridor_bounds=corridor_bounds,
+        cartesian_constraints=cartesian_constraints,
+    )
+
+    # If no constraints provided, fall back to the computed lateral bounds.
+    # Use minimum of |lb| and |ub| as local half-width clearance.
+    if np.isinf(clearance).all() or (clearance == clearance[0]).all():
+        clearance = np.minimum(np.abs(lb), np.abs(ub))
+        clearance = np.maximum(clearance, 1e-6)
+
+    # Width factor has TWO components for proper task differentiation:
+    #
+    # 1. ABSOLUTE (task-level): wider TASKS allow more cutting overall
+    #    - Uses global_clearance_ref as the reference for "typical wide tunnel"
+    #    - task_scale = tanh(task_clearance / global_ref) ∈ [0, 1]
+    #    - Narrow tasks (e.g., 1cm) get task_scale ≈ 0.4
+    #    - Wide tasks (e.g., 5cm) get task_scale ≈ 1.0
+    #
+    # 2. RELATIVE (within-task): wider SPOTS within a task allow more cutting
+    #    - Normalized to the task's own clearance distribution
+    #    - Creates spatial gradient of cutting within the task
+    #
+    # Task-level reference: typical clearance in this specific task
+    task_clearance_ref = np.percentile(clearance, 90)
+    if task_clearance_ref < 1e-6:
+        task_clearance_ref = np.max(clearance)
+    
+    # ABSOLUTE component: wider tasks allow more cutting overall (saturating)
+    task_scale = np.tanh(task_clearance_ref / global_clearance_ref) if task_clearance_ref > 1e-6 else 0.0
+    
+    # RELATIVE component: spatial gradient within the task
+    local_norm = np.clip(clearance / task_clearance_ref, 0.0, 2.0) if task_clearance_ref > 1e-6 else np.ones(N)
+    local_factor = local_norm ** w_width_exp
+    
+    # Combined: absolute scales overall, relative creates spatial gradient
+    # Width ENABLES cutting — narrow tasks AND narrow spots suppress cutting.
+    width_factor = task_scale * local_factor
+
+    # Compute phi_k: total turning angle in window around each knot.
+    # Window is now a fraction of path length (scale-invariant).
+    cut_window = max(cut_window_frac * L, 1e-6)
+    phi = compute_local_curvature_integral(centerline, s_knots, window=cut_window)
+
+    # Smooth kappa before computing the cutting weight.
+    # For sharp-corner paths, the cubic spline creates extreme narrow curvature
+    # spikes at waypoint corners.  Smoothing spreads the corner signal over
+    # ~sigma_knots knots, giving a smooth bell-shaped transition.
+    sigma_knots = max(5.0, 0.03 * N)
+    kappa_smoothed = gaussian_filter1d(kappa.astype(float), sigma=sigma_knots)
+
+    # Curvature MOTIVATES cutting — sharper curves trigger more cutting desire.
+    kappa_sm_abs = np.abs(kappa_smoothed)
+    kappa_sm_max = float(np.max(kappa_sm_abs))
+    kappa_factor = (kappa_sm_abs / kappa_sm_max) if kappa_sm_max > 1e-6 else np.zeros_like(kappa)
+
+    # Per-knot cutting fraction combines width (enabling) and curvature (motivating).
+    # This implements the research insight: "Width is the enabling factor;
+    # curvature is the motivating factor."
+    #   - Narrow task → task_scale low → overall less cutting
+    #   - Narrow spot within task → local_factor low → locally less cutting
+    #   - Wide + straight → kappa_factor low → no cutting (no motivation)
+    #   - Wide + curved → all factors high → maximum cutting
+    cut_fraction = np.clip(w_cut, 0.0, 1.0) * width_factor * kappa_factor * np.exp(-w_suppress * phi)
+
+    # Race-tracing direction: cut to the INSIDE of each turn.
+    # kappa_smoothed > 0 → left turn  → inside is LEFT (-N_right) → d targets lb
+    # kappa_smoothed < 0 → right turn → inside is RIGHT (+N_right) → d targets ub
+    # When kappa_smoothed ≈ 0 (straights), cut_fraction ≈ 0 → d ≈ 0 (centerline).
+    d_desired = np.where(
+        kappa_smoothed >= 0,
+        cut_fraction * lb,    # left turn: cut toward left (inside)
+        cut_fraction * ub,    # right turn: cut toward right (inside)
+    )
+    d_opt = np.clip(d_desired, lb, ub)
+
+    # Re-pin endpoints: kappa_smoothed may be non-zero near endpoints due to
+    # boundary effects of gaussian_filter1d, so explicitly zero them.
+    d_opt[0] = 0.0
+    d_opt[-1] = 0.0
 
     # Reconstruct the 2D path
     P = C + d_opt[:, None] * N_right
     P = np.asarray(P)
 
-    # Check for loops in the optimized path and remove them
+    # Remove any self-intersections introduced by aggressive cutting
     P = _remove_loops_from_path(P)
 
-    # Return a smoothed spline through the optimized points
+    # Cubic spline through optimised waypoints provides smoothness
     return ReferencePath(P, s=0.0, k=3)

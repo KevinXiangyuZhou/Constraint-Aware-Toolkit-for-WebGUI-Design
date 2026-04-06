@@ -1,15 +1,22 @@
 {
-  "_description": "Novice computer user — slow, over-cautious, compensates with very smooth planning",
+  "_description": "Novice computer user \u2014 slow, over-cautious, hesitant movements that give wide berth to boundaries",
   "Tp": 0.05,
-  "Th": 0.20,
-  "nc": [0.26, 0.026],
+  "Th": 0.2,
+  "nc": [
+    0.26,
+    0.026
+  ],
   "forearm": 0.357,
   "planner_weights": {
     "jerk": 3e-05,
     "progress": 3e-08,
-    "wall": 80,
+    "constraint": 80,
     "contour": 30,
     "lag": 3.0,
     "desired_speed": 0.12
+  },
+  "speed_model": {
+    "type": "gam",
+    "path": "population_gam.pkl"
   }
 }

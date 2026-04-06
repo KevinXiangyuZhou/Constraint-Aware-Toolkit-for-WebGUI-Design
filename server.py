@@ -133,19 +133,26 @@ async def simulate(request: SimulateRequest):
         if request.random_seed is not None:
             user_cfg["random_seed"] = request.random_seed
         
+        # Inject speed_model config with absolute path so the GAM model is
+        # found even when the config is written to a temporary file.
+        if "speed_model" not in user_cfg:
+            _gam_path = Path(__file__).resolve().parent / "hcs_package" / "src" / "hcs_package" / "user_configurations" / "population_gam.pkl"
+            if _gam_path.exists():
+                user_cfg["speed_model"] = {"type": "gam", "path": str(_gam_path)}
+
         # Write config file so the simulator gets explicit persona parameters
         if user_cfg:
             fd, temp_user_config_file = tempfile.mkstemp(suffix='.json')
             with os.fdopen(fd, 'w') as uf:
                 json.dump(user_cfg, uf)
-            
+
             # Log key parameters for debugging
             pw = user_cfg.get("planner_weights", {})
             logger.info(
-                "Sim config: seed=%s Th=%s nc=%s forearm=%s desired_speed=%s jerk=%s wall=%s contour=%s",
+                "Sim config: seed=%s Th=%s nc=%s forearm=%s desired_speed=%s jerk=%s constraint=%s contour=%s",
                 user_cfg.get("random_seed"), user_cfg.get("Th"), user_cfg.get("nc"),
                 user_cfg.get("forearm"), pw.get("desired_speed"), pw.get("jerk"),
-                pw.get("wall"), pw.get("contour")
+                pw.get("constraint"), pw.get("contour")
             )
 
         try:
@@ -205,6 +212,7 @@ async def simulate(request: SimulateRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
     except Exception as e:
+        logger.exception("Simulation failed")
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"

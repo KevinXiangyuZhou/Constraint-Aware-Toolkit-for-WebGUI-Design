@@ -46,8 +46,8 @@ var state = {
   pathConstraintType: 'keep-in',
   // Replay: track previous element for enter/leave event pairs
   replayPrevElement: null,
-  // Replay: use chrome.debugger API for CSS :hover
-  useDebugger: true
+  // Replay: use chrome.debugger API for CSS :hover (causes "started debugging" banner)
+  useDebugger: false
 };
 
 // Generate unique item IDs

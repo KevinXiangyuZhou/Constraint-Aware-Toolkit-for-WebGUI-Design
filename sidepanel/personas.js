@@ -5,37 +5,37 @@ var BUILTIN_PERSONAS = {
     name: 'Office Worker',
     _description: 'Office worker — balanced speed and precision, everyday desktop use',
     Tp: 0.05, Th: 0.30, nc: [0.20, 0.020], forearm: 0.35,
-    planner_weights: { jerk: 5e-06, progress: 3e-07, wall: 50, contour: 10, lag: 1.0, desired_speed: 0.20 }
+    planner_weights: { jerk: 5e-06, progress: 3e-07, constraint: 50, contour: 10, lag: 1.0, desired_speed: 0.20 }
   },
   gamer: {
     name: 'Gamer',
     _description: 'Gamer / Power user — fast, precise, long planning horizon',
     Tp: 0.05, Th: 0.50, nc: [0.10, 0.010], forearm: 0.36,
-    planner_weights: { jerk: 1e-06, progress: 5e-06, wall: 20, contour: 10, lag: 1.0, desired_speed: 0.30 }
+    planner_weights: { jerk: 1e-06, progress: 5e-06, constraint: 20, contour: 10, lag: 1.0, desired_speed: 0.30 }
   },
   novice: {
     name: 'Novice',
     _description: 'Novice computer user — slow, over-cautious',
     Tp: 0.05, Th: 0.20, nc: [0.26, 0.026], forearm: 0.34,
-    planner_weights: { jerk: 3e-05, progress: 3e-08, wall: 80, contour: 30, lag: 3.0, desired_speed: 0.12 }
+    planner_weights: { jerk: 3e-05, progress: 3e-08, constraint: 80, contour: 30, lag: 3.0, desired_speed: 0.12 }
   },
   fatigued: {
     name: 'Fatigued',
     _description: 'Fatigued user — reduced speed, elevated noise',
     Tp: 0.05, Th: 0.20, nc: [0.30, 0.030], forearm: 0.35,
-    planner_weights: { jerk: 2e-06, progress: 1e-07, wall: 50, contour: 5, lag: 0.5, desired_speed: 0.15 }
+    planner_weights: { jerk: 2e-06, progress: 1e-07, constraint: 50, contour: 5, lag: 0.5, desired_speed: 0.15 }
   },
   young_children: {
     name: 'Young Children',
     _description: 'Young children — slow, imprecise, small hand',
     Tp: 0.05, Th: 0.15, nc: [0.36, 0.036], forearm: 0.22,
-    planner_weights: { jerk: 3e-07, progress: 3e-08, wall: 15, contour: 3, lag: 0.3, desired_speed: 0.12 }
+    planner_weights: { jerk: 3e-07, progress: 3e-08, constraint: 15, contour: 3, lag: 0.3, desired_speed: 0.12 }
   },
   motor_impaired: {
     name: 'Motor Impaired',
     _description: 'Motor impairment — very slow, high noise, cautious near walls',
     Tp: 0.05, Th: 0.15, nc: [0.40, 0.040], forearm: 0.35,
-    planner_weights: { jerk: 1e-07, progress: 1e-08, wall: 100, contour: 50, lag: 5.0, desired_speed: 0.10 }
+    planner_weights: { jerk: 1e-07, progress: 1e-08, constraint: 100, contour: 50, lag: 5.0, desired_speed: 0.10 }
   }
 };
 
@@ -47,7 +47,7 @@ var PARAM_RANGES = {
   Th:              { min: 0.10,  max: 0.50,  scale: 'linear' },
   jerk_weight:     { min: 1e-7,  max: 1e-4,  scale: 'log' },
   nc_scale_smooth: { min: 2.0,   max: 0.5,   scale: 'linear' },
-  wall_weight:     { min: 10,    max: 100,   scale: 'log' },
+  constraint_weight: { min: 10,    max: 100,   scale: 'log' },
   contour_weight:  { min: 0.1,   max: 100,   scale: 'log' },
   forearm:         { min: 0.20,  max: 0.40,  scale: 'linear' }
 };
@@ -99,7 +99,7 @@ function levelsFromConfig(config) {
   return {
     predictiveness: levelFromParam(config.Th, 'Th'),
     constraint: Math.round(
-      (levelFromParam(pw.wall, 'wall_weight') + levelFromParam(pw.contour, 'contour_weight')) / 2
+      (levelFromParam(pw.constraint, 'constraint_weight') + levelFromParam(pw.contour, 'contour_weight')) / 2
     ),
     speed: Math.round(
       (levelFromParam(pw.desired_speed, 'desired_speed') + levelFromParam(pw.progress, 'progress_weight')) / 2
@@ -113,7 +113,7 @@ function levelsFromConfig(config) {
 
 function configFromLevels(predLvl, constrLvl, speedLvl, smoothLvl, armLvl) {
   const Th = paramFromLevel(predLvl, 'Th');
-  const wall = paramFromLevel(constrLvl, 'wall_weight');
+  const constraint = paramFromLevel(constrLvl, 'constraint_weight');
   const contour = paramFromLevel(constrLvl, 'contour_weight');
   const lag = 0.1 * contour;
   const desired_speed = paramFromLevel(speedLvl, 'desired_speed');
@@ -126,7 +126,7 @@ function configFromLevels(predLvl, constrLvl, speedLvl, smoothLvl, armLvl) {
     Th,
     nc: [nc_scale * NC_BASE[0], nc_scale * NC_BASE[1]],
     forearm,
-    planner_weights: { jerk, progress, wall, contour, lag, desired_speed }
+    planner_weights: { jerk, progress, constraint, contour, lag, desired_speed }
   };
 }
 
@@ -154,9 +154,9 @@ function updateAllTooltips() {
   const th = paramFromLevel(pL, 'Th');
   tooltipPredictiveness.textContent = `Th=${fmtParam(th)}s`;
 
-  const wl = paramFromLevel(cL, 'wall_weight');
+  const wl = paramFromLevel(cL, 'constraint_weight');
   const ct = paramFromLevel(cL, 'contour_weight');
-  tooltipConstraint.textContent = `wall=${fmtParam(wl)}, contour=${fmtParam(ct)}, lag=${fmtParam(0.1*ct)}`;
+  tooltipConstraint.textContent = `constraint=${fmtParam(wl)}, contour=${fmtParam(ct)}, lag=${fmtParam(0.1*ct)}`;
 
   const ds = paramFromLevel(sL, 'desired_speed');
   const pw = paramFromLevel(sL, 'progress_weight');

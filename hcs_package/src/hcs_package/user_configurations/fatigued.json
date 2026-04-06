@@ -1,15 +1,22 @@
 {
-  "_description": "Fatigued user — reduced speed, elevated noise, degraded motor smoothness",
+  "_description": "Fatigued user \u2014 reduced speed, elevated noise, retains moderate awareness",
   "Tp": 0.05,
-  "Th": 0.20,
-  "nc": [0.30, 0.030],
+  "Th": 0.2,
+  "nc": [
+    0.3,
+    0.03
+  ],
   "forearm": 0.35,
   "planner_weights": {
     "jerk": 2e-06,
     "progress": 1e-07,
-    "wall": 50,
+    "constraint": 50,
     "contour": 5,
     "lag": 0.5,
     "desired_speed": 0.15
+  },
+  "speed_model": {
+    "type": "gam",
+    "path": "population_gam.pkl"
   }
 }

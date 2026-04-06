@@ -1,8 +1,9 @@
 """Unified constraint representation for steering tasks.
 
 This module provides a flexible constraint system that can represent various
-types of spatial constraints (obstacles, boundaries, corridors) and convert
-them to corridor_bounds functions used by the steering simulator.
+types of spatial constraints (obstacles, boundaries, corridors).
+PathConstraints are converted to PolygonConstraints at setup time so that all
+constraints are enforced uniformly in Cartesian (world) space by the MPC.
 """
 
 from dataclasses import dataclass
@@ -26,13 +27,6 @@ class PathConstraint:
 class PolygonConstraint:
     """A polygon constraint"""
     vertices: List[Tuple[float, float]]
-    
-
-@dataclass
-class CircleConstraint:
-    """A circular constraint"""
-    center: Tuple[float, float]
-    radius: float
 
 
 @dataclass
@@ -51,7 +45,6 @@ class ConstraintRegion:
     geometry: Union[
         PathConstraint,
         PolygonConstraint,
-        CircleConstraint,
         RectangleConstraint
     ]
     margin: Optional[float] = None  # Safety margin for this region

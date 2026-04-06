@@ -1,7 +1,7 @@
 """Typed parameter structures for steering models."""
 
-from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Any, List, Optional, Sequence, Tuple
 
 
 @dataclass
@@ -54,4 +54,9 @@ class SteeringModelInput:
     planner_margin: Optional[float] = None  # safety margin from walls
     reference_path: Optional[object] = None  # ReferencePath object for MPC
     current_acc: Optional[Tuple[float, float]] = None # Current acceleration (ax, ay)
-    corridor_bounds: Optional[Tuple] = None  # Tuple (bound_left, bound_right) for asymmetric corridor constraints
+    corridor_bounds: Optional[Tuple] = None  # (left_bound, right_bound) for path-relative corridor constraints
+    cartesian_constraints: Optional[List[Any]] = None  # List[ConstraintRegion] for world-space polygon/rectangle constraints
+    clearance_profile: Optional[Tuple] = None  # (s_array, clearance_array) for steering-law speed scaling
+    curvature_rate_profile: Optional[Tuple] = None  # (s_array, rate_array) for stop-and-go speed modulation
+    curvature_profile: Optional[Tuple] = None  # (s_array, kappa_array) for curvature-responsive speed scaling
+    speed_model: Optional[Any] = None  # SpeedModel instance (overrides parametric default)
