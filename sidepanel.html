@@ -665,6 +665,89 @@
       color: #fca5a5;
     }
 
+    /* Step containers within tasks */
+    .step-container {
+      border-top: 1px solid #333;
+    }
+    .step-container:first-child {
+      border-top: none;
+    }
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px 5px 20px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 11px;
+      color: #a3a3a3;
+    }
+    .step-header:hover {
+      background: rgba(255,255,255,0.04);
+    }
+    .step-container.active-step > .step-header {
+      color: #93c5fd;
+    }
+    .step-expand-icon {
+      font-size: 8px;
+      color: #525252;
+      width: 12px;
+      text-align: center;
+      flex-shrink: 0;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+    .step-expand-icon.expanded {
+      transform: rotate(90deg);
+    }
+    .step-name {
+      flex: 1;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .step-name-input {
+      flex: 1;
+      font-size: 11px;
+      color: #e5e5e5;
+      font-weight: 500;
+      background: #1e1e1e;
+      border: 1px solid #60a5fa;
+      border-radius: 3px;
+      padding: 1px 4px;
+      outline: none;
+      font-family: inherit;
+    }
+    .step-actions {
+      display: flex;
+      gap: 3px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .step-header:hover .step-actions {
+      opacity: 1;
+    }
+    .step-add-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px 10px 4px 20px;
+      font-size: 10px;
+      color: #525252;
+      cursor: pointer;
+      border-top: 1px solid #333;
+      transition: color 0.15s, background 0.15s;
+    }
+    .step-add-btn:hover {
+      color: #a3a3a3;
+      background: rgba(255,255,255,0.04);
+    }
+    .step-items-list {
+      padding: 2px 0;
+    }
+
     /* User Personas panel */
     .personas-panel {
       margin-bottom: 20px;
@@ -1032,10 +1115,7 @@
           <span>Click</span>
           <span class="shortcut">E</span>
         </button>
-        <button type="button" id="btn-add-goto" class="tool-btn tool-btn-goto" title="Add go-to URL action">
-          <span class="icon icon-square"><i data-lucide="link"></i></span>
-          <span>Go-to URL</span>
-        </button>
+        <!-- Go-to is now handled by click items with gotoUrl -->
       </div>
     </div>
     

@@ -5,15 +5,18 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'contentScriptReady': {
-      // During replay, send the replay task's items (not the active task)
+      // During replay, send the replay task's active step items
       let itemsToSend = null;
       if (playingRoundRef) {
         const replayTask = tasks.find(t => t.id === experimentResults[playingRoundRef.taskIdx]?.taskId);
-        if (replayTask) itemsToSend = replayTask.items;
+        if (replayTask) {
+          const step = getActiveStep(replayTask);
+          if (step) itemsToSend = step.items;
+        }
       }
       if (!itemsToSend) {
-        const task = tasks.find(t => t.id === activeTaskId);
-        if (task) itemsToSend = task.items;
+        const step = getActiveTaskStep();
+        if (step) itemsToSend = step.items;
       }
       if (itemsToSend) {
         sendToContentScript({
@@ -35,9 +38,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       updateModeButtons(message.mode);
       break;
     case 'itemAdded': {
-      const task = tasks.find(t => t.id === activeTaskId);
-      if (task) {
-        task.items.push(message.item);
+      const step = getActiveTaskStep();
+      if (step) {
+        step.items.push(message.item);
       }
       waypointCount = message.waypointCount ?? waypointCount;
       constraintCount = message.constraintCount ?? constraintCount;
@@ -46,16 +49,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       btnUndo.disabled = false;
       btnRedo.disabled = true;
       const addedType = message.item?.type;
-      const typeLabel = addedType === 'waypoint' ? 'Waypoint' : addedType === 'waypoint_click' ? 'Click waypoint' : addedType === 'goto' ? 'Go-to' : 'Constraint';
+      const typeLabel = addedType === 'waypoint' ? 'Waypoint' : addedType === 'waypoint_click' ? 'Click waypoint' : 'Constraint';
       updateStatus(`${typeLabel} added`, 'success');
       renderTasksList();
       renderExpChecks();
+
+      // Auto-create a new step with a starting waypoint when a click navigates
+      if (addedType === 'waypoint_click' && message.item?.data?.gotoUrl) {
+        const task = tasks.find(t => t.id === activeTaskId);
+        if (task) {
+          const d = message.item.data;
+          const newStep = createStep(nextStepName(task));
+          newStep.items.push({
+            id: 'wp-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+            type: 'waypoint',
+            data: {
+              x: d.x,
+              y: d.y,
+              pixelX: d.pixelX,
+              pixelY: d.pixelY,
+              pageUrl: d.gotoUrl
+            },
+            enabled: true
+          });
+          task.steps.push(newStep);
+          task.activeStepIdx = task.steps.length - 1;
+          loadStepIntoPage(newStep);
+          renderTasksList();
+          renderExpChecks();
+          updateStatus('New step created for navigation target', 'success');
+        }
+      }
       break;
     }
     case 'itemsChanged': {
-      const task = tasks.find(t => t.id === activeTaskId);
-      if (task) {
-        task.items = message.items || [];
+      const step = getActiveTaskStep();
+      if (step) {
+        step.items = message.items || [];
       }
       waypointCount = message.waypointCount ?? waypointCount;
       constraintCount = message.constraintCount ?? constraintCount;
@@ -105,8 +135,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
-  // Don't process shortcuts when editing task names
+  // Don't process shortcuts when editing names
   if (document.activeElement?.classList?.contains('task-name-input')) return;
+  if (document.activeElement?.classList?.contains('step-name-input')) return;
 
   if (e.key === 'q' || e.key === 'Q') {
     e.preventDefault();
@@ -146,6 +177,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (document.activeElement?.classList?.contains('task-name-input')) return;
+  if (document.activeElement?.classList?.contains('step-name-input')) return;
 
   if (e.key === 'q' || e.key === 'Q' || e.key === 'w' || e.key === 'W' ||
       e.key === 'e' || e.key === 'E' ||
@@ -170,9 +202,8 @@ document.addEventListener('keyup', (e) => {
   }
   renderPersonaSelect();
 
-  // Create default "Task 1" and set as active
+  // Create default "Task 1" with one step, set as active
   const defaultTask = createTask();
-  await insertInitialGoto(defaultTask);
   activeTaskId = defaultTask.id;
   renderTasksList();
 
@@ -193,12 +224,14 @@ document.addEventListener('keyup', (e) => {
         corridorWidthSlider.value = Math.max(5, Math.min(80, px));
         updateCorridorWidthLabel();
       }
-      // Sync existing items into the default task (preserve the goto we just inserted)
+      // Sync existing items into the default step
       if (st.items && st.items.length > 0) {
-        const gotoItems = defaultTask.items.filter(i => i.type === 'goto');
-        defaultTask.items = [...gotoItems, ...st.items];
-        defaultTask.undoStack = st.undoStack || [];
-        defaultTask.redoStack = st.redoStack || [];
+        const step = getActiveStep(defaultTask);
+        if (step) {
+          step.items = st.items;
+          step.undoStack = st.undoStack || [];
+          step.redoStack = st.redoStack || [];
+        }
         renderTasksList();
       }
     }

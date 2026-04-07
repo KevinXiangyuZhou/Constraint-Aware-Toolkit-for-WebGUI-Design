@@ -8,14 +8,13 @@ var resultsSection = document.getElementById('results-section');
 var resultsTree = document.getElementById('results-tree');
 
 // Experiment results state
-var experimentResults = []; // array of { taskId, taskName, sims: [{ personaId, personaName, personaCfg, rounds: [{ seed, status, trajectory, duration, error }], expanded }], expanded }
+// Array of { taskId, taskName, sims: [{ personaId, personaName, personaCfg, rounds: [{ seed, status, stepResults, trajectory, duration, error }], expanded }], expanded }
+var experimentResults = [];
 var playingRoundRef = null; // { taskIdx, simIdx, roundIdx } or null
 var experimentRunning = false;
 
 // Deterministic seeding: produce unique seeds per (experiment, task, persona, round)
 function makeSeed(expSeed, taskIndex, personaIndex, roundIndex) {
-  // Simple deterministic formula that guarantees unique seeds for all combos
-  // Use prime multipliers to avoid collisions
   return ((expSeed % 100000) * 1000000 + taskIndex * 10000 + personaIndex * 100 + roundIndex + 1) % 2147483647;
 }
 
@@ -62,11 +61,10 @@ document.getElementById('exp-personas-none').addEventListener('click', () => {
   expPersonasChecks.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
 });
 
-// Build task config from a task's saved items. Returns { taskConfig, clickMap }.
-// clickMap: array of { waypointIndex, itemId, selector, xpath, x, y, dwellMs, toleranceRadiusPx, pageUrl }
-function buildTaskConfig(taskData, viewportW, viewportH) {
-  const allWaypoints = taskData.items.filter(i => i.type === 'waypoint' || i.type === 'waypoint_click');
-  const constraints = taskData.items.filter(i => i.type === 'constraint' && i.enabled !== false);
+// Build task config from a step's items. Returns { taskConfig, clickMap }.
+function buildStepConfig(stepItems, viewportW, viewportH) {
+  const allWaypoints = stepItems.filter(i => i.type === 'waypoint' || i.type === 'waypoint_click');
+  const constraints = stepItems.filter(i => i.type === 'constraint' && i.enabled !== false);
 
   const clickMap = [];
   allWaypoints.forEach((w, idx) => {
@@ -80,13 +78,13 @@ function buildTaskConfig(taskData, viewportW, viewportH) {
         y: w.data.pixelY || w.data.y * viewportH,
         dwellMs: w.data.dwellMs || 200,
         toleranceRadiusPx: w.data.toleranceRadiusPx || 10,
-        pageUrl: w.data.pageUrl || ''
+        pageUrl: w.data.pageUrl || '',
+        gotoUrl: w.data.gotoUrl || null
       });
     }
   });
 
-  // If the last waypoint is a click, pass its tolerance radius so the simulator
-  // uses the same end-target radius as replay (50px default)
+  // If the last waypoint is a click, pass its tolerance radius
   const lastWp = allWaypoints.length > 0 ? allWaypoints[allWaypoints.length - 1] : null;
   const clickRadiusPx = (lastWp && lastWp.type === 'waypoint_click')
     ? (lastWp.data.toleranceRadiusPx || 50) : null;
@@ -118,32 +116,7 @@ function buildTaskConfig(taskData, viewportW, viewportH) {
   return { taskConfig, clickMap };
 }
 
-// Split a task's items into per-page groups at goto boundaries.
-// Each group has its own taskConfig, clickMap, and allWaypoints for independent simulation.
-function buildPageGroups(taskData, viewportW, viewportH) {
-  const groups = [];
-  let currentGroup = null;
-
-  for (const item of taskData.items) {
-    if (item.type === 'goto') {
-      currentGroup = { gotoUrl: item.data.url, items: [] };
-      groups.push(currentGroup);
-    } else if (currentGroup) {
-      currentGroup.items.push(item);
-    } else {
-      currentGroup = { gotoUrl: null, items: [item] };
-      groups.push(currentGroup);
-    }
-  }
-
-  return groups.map(g => {
-    const { taskConfig, clickMap } = buildTaskConfig({ items: g.items }, viewportW, viewportH);
-    return { gotoUrl: g.gotoUrl, taskConfig, clickMap, allWaypoints: taskConfig.waypoints };
-  });
-}
-
 // Check trajectory for constraint violations.
-// Returns { violated: boolean, count: number } where count = number of trajectory points violating any constraint.
 function checkViolations(trajectory, taskConfig) {
   if (!trajectory || !taskConfig.constraints?.regions) return { violated: false, count: 0 };
   const W = taskConfig.screen_width;
@@ -183,7 +156,6 @@ function isInsideRegion(nx, ny, g) {
 
 // Run a single simulation call
 async function runSingleSim(taskConfig, personaCfg, seed, cookies, viewport, url) {
-  // Embed the seed directly into the persona config so it's guaranteed to reach the simulator
   const cfgWithSeed = {
     ...personaCfg,
     random_seed: seed
@@ -217,13 +189,19 @@ btnSimulate.addEventListener('click', async () => {
   // Ensure all tasks have saved state
   await saveActiveTaskState();
 
-  // Validate tasks have waypoints
+  // Validate tasks have steps with waypoints
   for (const tid of selTaskIds) {
     const t = tasks.find(tt => tt.id === tid);
-    const wpCount = t ? t.items.filter(i => i.type === 'waypoint').length : 0;
-    if (wpCount < 2) {
-      updateStatus(`Task "${t?.name}" needs at least 2 waypoints`, 'error');
+    if (!t || !t.steps || t.steps.length === 0) {
+      updateStatus(`Task "${t?.name}" has no steps`, 'error');
       return;
+    }
+    for (const step of t.steps) {
+      const wpCount = step.items.filter(i => i.type === 'waypoint' || i.type === 'waypoint_click').length;
+      if (wpCount < 1) {
+        updateStatus(`"${t.name}" / "${step.name}" needs at least 1 waypoint`, 'error');
+        return;
+      }
     }
   }
 
@@ -251,7 +229,8 @@ btnSimulate.addEventListener('click', async () => {
             status: 'pending',
             trajectory: null,
             duration: null,
-            error: null
+            error: null,
+            stepResults: []
           }))
         };
       })
@@ -276,80 +255,87 @@ btnSimulate.addEventListener('click', async () => {
     tabUrl = tab.url;
   } catch (_) {}
 
-  // Execute all simulations sequentially — per-page simulation
+  // Build flat list of all round jobs to run in parallel
+  const jobs = [];
   for (let ti = 0; ti < experimentResults.length; ti++) {
     const taskRes = experimentResults[ti];
     const taskData = tasks.find(tt => tt.id === taskRes.taskId);
     if (!taskData) continue;
-    const pageGroups = buildPageGroups(taskData, viewportW, viewportH);
-
     for (let si = 0; si < taskRes.sims.length; si++) {
       const sim = taskRes.sims[si];
-      sim.pageGroups = pageGroups;
-
       for (let ri = 0; ri < sim.rounds.length; ri++) {
-        const round = sim.rounds[ri];
-        round.status = 'running';
-        round.clickResults = [];
-        round.pageJumps = [];
-        round.pageTrajectories = [];
-        renderResults();
-
-        let allTrajectoryPoints = [];
-        let totalDuration = 0;
-        let failed = false;
-
-        for (let pgIdx = 0; pgIdx < pageGroups.length; pgIdx++) {
-          const pg = pageGroups[pgIdx];
-          if (pg.taskConfig.waypoints.length < 2) {
-            round.pageTrajectories.push({
-              gotoUrl: pg.gotoUrl, trajectory: [], clickMap: pg.clickMap,
-              allWaypoints: pg.allWaypoints, duration: 0,
-              violations: { violated: false, count: 0 }
-            });
-            continue;
-          }
-          try {
-            const result = await runSingleSim(
-              pg.taskConfig, sim.personaCfg, round.seed + pgIdx,
-              cookies, { width: viewportW, height: viewportH }, tabUrl
-            );
-            if (result.success && result.trajectory) {
-              const traj = result.trajectory;
-              const dur = result.total_duration ?? (traj.length > 0 ? traj[traj.length - 1][2] : 0);
-              round.pageTrajectories.push({
-                gotoUrl: pg.gotoUrl, trajectory: traj, clickMap: pg.clickMap,
-                allWaypoints: pg.allWaypoints, duration: dur,
-                violations: checkViolations(traj, pg.taskConfig)
-              });
-              allTrajectoryPoints.push(...traj);
-              totalDuration += dur;
-            } else {
-              failed = true;
-              round.error = result.error || 'Unknown error';
-              break;
-            }
-          } catch (err) {
-            failed = true;
-            round.error = err.message;
-            break;
-          }
-          renderResults();
-        }
-
-        round.trajectory = allTrajectoryPoints;
-        round.duration = totalDuration;
-        round.violations = {
-          violated: round.pageTrajectories.some(p => p.violations?.violated),
-          count: round.pageTrajectories.reduce((s, p) => s + (p.violations?.count || 0), 0)
-        };
-        round.status = failed ? 'error' : 'done';
-        renderResults();
+        jobs.push({ taskData, sim, round: sim.rounds[ri], stepIdx: 0 });
       }
     }
   }
 
+  // Run a single round (all its steps sequentially)
+  async function runRound(job) {
+    const { taskData, sim, round } = job;
+    round.status = 'running';
+    round.clickResults = [];
+    round.stepResults = [];
+
+    let allTrajectoryPoints = [];
+    let totalDuration = 0;
+    let failed = false;
+
+    for (let stepIdx = 0; stepIdx < taskData.steps.length; stepIdx++) {
+      const step = taskData.steps[stepIdx];
+      const { taskConfig, clickMap } = buildStepConfig(step.items, viewportW, viewportH);
+
+      if (taskConfig.waypoints.length < 1) {
+        round.stepResults.push({
+          stepId: step.id, stepName: step.name,
+          trajectory: [], clickMap, duration: 0,
+          violations: { violated: false, count: 0 }
+        });
+        continue;
+      }
+
+      try {
+        const result = await runSingleSim(
+          taskConfig, sim.personaCfg, round.seed + stepIdx,
+          cookies, { width: viewportW, height: viewportH }, tabUrl
+        );
+        if (result.success && result.trajectory) {
+          const traj = result.trajectory;
+          const dur = result.total_duration ?? (traj.length > 0 ? traj[traj.length - 1][2] : 0);
+          round.stepResults.push({
+            stepId: step.id, stepName: step.name,
+            trajectory: traj, clickMap, duration: dur,
+            violations: checkViolations(traj, taskConfig)
+          });
+          allTrajectoryPoints.push(...traj);
+          totalDuration += dur;
+        } else {
+          failed = true;
+          round.error = result.error || 'Unknown error';
+          break;
+        }
+      } catch (err) {
+        failed = true;
+        round.error = err.message;
+        break;
+      }
+    }
+
+    round.trajectory = allTrajectoryPoints;
+    round.duration = totalDuration;
+    round.violations = {
+      violated: round.stepResults.some(s => s.violations?.violated),
+      count: round.stepResults.reduce((sum, s) => sum + (s.violations?.count || 0), 0)
+    };
+    round.status = failed ? 'error' : 'done';
+  }
+
+  // Launch all rounds in parallel, update UI periodically
+  const uiInterval = setInterval(renderResults, 500);
+  await Promise.all(jobs.map(job => runRound(job)));
+  clearInterval(uiInterval);
+
   experimentRunning = false;
   btnSimulate.disabled = false;
+  renderResults();
   updateStatus('Experiment complete', 'success');
 });

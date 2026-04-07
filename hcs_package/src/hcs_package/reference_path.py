@@ -137,11 +137,14 @@ class ReferencePath:
     def curvature(self, theta):
         """Compute curvature κ at arclength theta."""
         u = self._theta_to_u(theta)
+        k = self.tck[2] if hasattr(self.tck, '__len__') else 3
+        if k < 2:
+            return 0.0  # linear spline has zero curvature
         dxy = splev(u, self.tck, der=1)
         ddxy = splev(u, self.tck, der=2)
         dx, dy = dxy[0], dxy[1]
         ddx, ddy = ddxy[0], ddxy[1]
-        num = dx * ddy - dy * ddx  # 
+        num = dx * ddy - dy * ddx
         den = (dx**2 + dy**2)**1.5
         if den < 1e-12:
             return 0.0
@@ -189,6 +192,12 @@ class ReferencePath:
             u0 = max(u0, min_u)
 
         # --- 2) Refine with a few Newton steps on f(u) = ||c(u) - pos||^2 ---
+        #     Skip for linear splines (k=1) since der=2 is undefined.
+
+        spline_k = self.tck[2] if hasattr(self.tck, '__len__') else 3
+        if spline_k < 2:
+            theta = float(np.interp(u0, self.u_dense, self.arclengths))
+            return theta
 
         max_iter = 5
         tol = 1e-6

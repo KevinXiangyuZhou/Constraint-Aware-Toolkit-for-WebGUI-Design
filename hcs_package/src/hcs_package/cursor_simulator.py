@@ -243,8 +243,16 @@ class CursorSimulator:
                 screen_height = float(task_data["screen_height"])
         
         # Validate waypoints
-        if waypoints is None or len(waypoints) < 2:
-            raise ValueError("At least 2 waypoints are required (either from task_file or waypoints parameter)")
+        if waypoints is None or len(waypoints) < 1:
+            raise ValueError("At least 1 waypoint is required (either from task_file or waypoints parameter)")
+
+        # Single waypoint: return a trivial trajectory at that point
+        if len(waypoints) == 1:
+            x, y = waypoints[0]
+            result = [(x, y, 0.0)]
+            if return_reference_path:
+                return result, None
+            return result
         
         # Convert screen coordinates to normalized coordinates (meters)
         screen_width_m = 0.46  # meters

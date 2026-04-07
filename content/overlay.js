@@ -162,9 +162,12 @@ function renderOverlay() {
       ctx.setLineDash([]);
     }
     
-    ctx.fillStyle = 'white';
-    ctx.font = '12px Arial';
+    ctx.font = 'bold 12px Arial';
     const label = isClick ? ('C' + clickNum) : ('' + wpNum);
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 3;
+    ctx.strokeText(label, x + 10, y - 10);
+    ctx.fillStyle = '#000';
     ctx.fillText(label, x + 10, y - 10);
     
     if (index > 0) {

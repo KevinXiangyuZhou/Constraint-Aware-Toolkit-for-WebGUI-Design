@@ -178,6 +178,37 @@ def compute_curvature_spike_profile(
     return spike
 
 
+def _ray_to_polygon_boundary(origin: np.ndarray, direction: np.ndarray,
+                              vertices: np.ndarray) -> float:
+    """Distance from origin along direction to the nearest polygon edge.
+
+    Returns inf if the ray doesn't hit any edge.
+    """
+    min_t = float('inf')
+    n = len(vertices)
+    dx, dy = float(direction[0]), float(direction[1])
+    ox, oy = float(origin[0]), float(origin[1])
+
+    for i in range(n):
+        j = (i + 1) % n
+        ex, ey = float(vertices[i][0]), float(vertices[i][1])
+        fx, fy = float(vertices[j][0]), float(vertices[j][1])
+
+        # Edge vector
+        sx, sy = fx - ex, fy - ey
+        denom = dx * sy - dy * sx
+        if abs(denom) < 1e-12:
+            continue  # parallel
+
+        t = ((ex - ox) * sy - (ey - oy) * sx) / denom  # ray parameter
+        u = ((ex - ox) * dy - (ey - oy) * dx) / denom  # edge parameter
+
+        if t > 1e-9 and 0.0 <= u <= 1.0:
+            min_t = min(min_t, t)
+
+    return min_t
+
+
 def compute_clearance_profile(
     ref_path,
     s_samples: np.ndarray,

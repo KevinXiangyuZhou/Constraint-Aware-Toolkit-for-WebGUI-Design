@@ -3,14 +3,11 @@
 // ====== Playback Management ======
 
 // Split a trajectory into segments at click waypoint positions.
-// clickMap entries have waypointIndex, but we need to map to trajectory point indices.
-// We find the trajectory point closest to each click waypoint's (x, y).
 function buildSegmentPlan(trajectory, clickMap) {
   if (!clickMap || clickMap.length === 0) {
     return [{ trajectory, clickTarget: null }];
   }
 
-  // Find trajectory split points for each click waypoint
   const splitIndices = [];
   for (const cm of clickMap) {
     let bestIdx = -1, bestDist = Infinity;
@@ -31,11 +28,10 @@ function buildSegmentPlan(trajectory, clickMap) {
     const rebased = slice.map(([x, y, t]) => [x, y, t - t0]);
     segments.push({
       trajectory: rebased,
-      clickTarget: { x: cm.x, y: cm.y, dwellMs: cm.dwellMs, toleranceRadiusPx: cm.toleranceRadiusPx, selector: cm.selector, xpath: cm.xpath, itemId: cm.itemId }
+      clickTarget: { x: cm.x, y: cm.y, dwellMs: cm.dwellMs, toleranceRadiusPx: cm.toleranceRadiusPx, selector: cm.selector, xpath: cm.xpath, itemId: cm.itemId, gotoUrl: cm.gotoUrl }
     });
     start = end;
   }
-  // Remaining trajectory after last click
   if (start < trajectory.length) {
     const slice = trajectory.slice(start);
     const t0 = slice.length > 0 ? slice[0][2] : 0;
@@ -45,7 +41,6 @@ function buildSegmentPlan(trajectory, clickMap) {
   return segments;
 }
 
-// Wait for a message of a given type from content script, with timeout
 function waitForMessage(type, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -65,7 +60,6 @@ function waitForMessage(type, timeoutMs = 30000) {
   });
 }
 
-// Wait for the active tab to finish loading (after navigation)
 function waitForTabLoad(timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -104,7 +98,7 @@ async function sendTaskItemsWithRetry(items, maxRetries = 5, delayMs = 400) {
 async function playRound(taskIdx, simIdx, roundIdx) {
   const sim = experimentResults[taskIdx]?.sims[simIdx];
   const round = sim?.rounds[roundIdx];
-  if (!round || !round.pageTrajectories || round.pageTrajectories.length === 0) return;
+  if (!round || !round.stepResults || round.stepResults.length === 0) return;
 
   if (playingRoundRef) { await stopPlayback(); }
 
@@ -119,41 +113,24 @@ async function playRound(taskIdx, simIdx, roundIdx) {
   const tab = await getCurrentTab();
   if (tab?.url) round.pageJumps.push(tab.url);
 
-  for (let pgIdx = 0; pgIdx < round.pageTrajectories.length; pgIdx++) {
+  for (let stepIdx = 0; stepIdx < round.stepResults.length; stepIdx++) {
     if (playbackAborted) break;
-    const pg = round.pageTrajectories[pgIdx];
+    const sr = round.stepResults[stepIdx];
 
-    // Navigate to the page group's URL if needed
-    if (pg.gotoUrl) {
-      const curTab = await getCurrentTab();
-      const targetUrl = pg.gotoUrl.split('#')[0];
-      const currentUrl = curTab?.url?.split('#')[0] || '';
-      if (targetUrl && targetUrl !== currentUrl) {
-        try {
-          await chrome.tabs.update(curTab.id, { url: pg.gotoUrl });
-          const newUrl = await waitForTabLoad(15000);
-          if (newUrl) round.pageJumps.push(newUrl);
-          // Wait for content script re-injection + page rendering
-          await new Promise(r => setTimeout(r, 1000));
-        } catch (navErr) {
-          console.error('Page group navigation error:', navErr);
-          break;
-        }
-      }
+    // Send the step's items to overlay so it shows the correct visualization
+    if (replayTaskData && replayTaskData.steps[stepIdx]) {
+      try {
+        await sendToContentScript({
+          type: 'loadTaskState',
+          items: replayTaskData.steps[stepIdx].items,
+          undoStack: [], redoStack: []
+        });
+      } catch (_) {}
     }
 
-    // Send task items so the overlay shows the current page's items
-    if (replayTaskData) {
-      await sendTaskItemsWithRetry(replayTaskData.items);
-    }
+    if (!sr.trajectory || sr.trajectory.length === 0) continue;
 
-    // Allow the page to settle before starting segment replay
-    await new Promise(r => setTimeout(r, 500));
-
-    if (pg.trajectory.length === 0) continue;
-
-    // Build segment plan for this page group's trajectory
-    const segments = buildSegmentPlan(pg.trajectory, pg.clickMap || []);
+    const segments = buildSegmentPlan(sr.trajectory, sr.clickMap || []);
 
     for (let segIdx = 0; segIdx < segments.length; segIdx++) {
       if (playbackAborted) break;
@@ -175,7 +152,7 @@ async function playRound(taskIdx, simIdx, roundIdx) {
             failureReason: result.failureReason || null
           });
 
-          if (result.success) {
+          if (result.success && seg.clickTarget.gotoUrl) {
             const navStart = Date.now();
             try {
               const newUrl = await waitForTabLoad(15000);
@@ -184,14 +161,7 @@ async function playRound(taskIdx, simIdx, roundIdx) {
               lastClick.postClickUrl = newUrl;
               lastClick.loadDurationMs = loadDuration;
               if (newUrl !== preUrl) round.pageJumps.push(newUrl);
-              // Wait for content script re-injection + page rendering
-              await new Promise(r => setTimeout(r, 1000));
-
-              // Send task items so the new page's overlay shows its items
-              if (newUrl !== preUrl && replayTaskData) {
-                await sendTaskItemsWithRetry(replayTaskData.items);
-                await new Promise(r => setTimeout(r, 500));
-              }
+              await new Promise(r => setTimeout(r, 300));
             } catch (navErr) {
               if (navErr.message === 'navigation_timeout') {
                 const lastClick = round.clickResults[round.clickResults.length - 1];
@@ -211,7 +181,59 @@ async function playRound(taskIdx, simIdx, roundIdx) {
     }
   }
 
-  // Clean up: hide ghost cursor and stop replay state in content script
+  try { await sendToContentScript({ type: 'stopReplay' }); } catch (_) {}
+  playingRoundRef = null;
+  isReplaying = false;
+  renderResults();
+}
+
+async function playStep(taskIdx, simIdx, roundIdx, stepIdx) {
+  const sim = experimentResults[taskIdx]?.sims[simIdx];
+  const round = sim?.rounds[roundIdx];
+  const sr = round?.stepResults?.[stepIdx];
+  if (!sr || !sr.trajectory || sr.trajectory.length === 0) return;
+
+  if (playingRoundRef) { await stopPlayback(); }
+
+  playingRoundRef = { taskIdx, simIdx, roundIdx, stepIdx };
+  isReplaying = true;
+  playbackAborted = false;
+  renderResults();
+
+  const replayTaskData = tasks.find(tt => tt.id === experimentResults[taskIdx]?.taskId);
+
+  // Load step items into overlay
+  if (replayTaskData && replayTaskData.steps[stepIdx]) {
+    try {
+      await sendToContentScript({
+        type: 'loadTaskState',
+        items: replayTaskData.steps[stepIdx].items,
+        undoStack: [], redoStack: []
+      });
+    } catch (_) {}
+  }
+
+  const segments = buildSegmentPlan(sr.trajectory, sr.clickMap || []);
+
+  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+    if (playbackAborted) break;
+    const seg = segments[segIdx];
+    if (seg.trajectory.length === 0 && !seg.clickTarget) continue;
+
+    try {
+      if (seg.clickTarget) {
+        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory, clickTarget: seg.clickTarget });
+        await waitForMessage('clickFired', 30000);
+      } else {
+        await sendToContentScript({ type: 'loadReplaySegment', trajectory: seg.trajectory });
+        await waitForMessage('segmentComplete', 60000);
+      }
+    } catch (err) {
+      console.error('Step playback error:', err);
+      break;
+    }
+  }
+
   try { await sendToContentScript({ type: 'stopReplay' }); } catch (_) {}
   playingRoundRef = null;
   isReplaying = false;
@@ -262,7 +284,6 @@ function renderResults() {
         simHeader.appendChild(sExpIcon);
         simHeader.appendChild(document.createTextNode(sim.personaName));
 
-        // Completion badge
         const doneCount = sim.rounds.filter(r => r.status === 'done').length;
         const errCount = sim.rounds.filter(r => r.status === 'error').length;
         const badge = document.createElement('span');
@@ -275,13 +296,11 @@ function renderResults() {
         simEl.appendChild(simHeader);
 
         if (sim.expanded) {
-          // Aggregated metrics
           const completedRounds = sim.rounds.filter(r => r.status === 'done' && r.duration != null);
           if (completedRounds.length > 0) {
             const times = completedRounds.map(r => r.duration);
             const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
 
-            // Constraint violations
             const violatingRoundIndices = [];
             sim.rounds.forEach((r, ri) => {
               if (r.status === 'done' && r.violations && r.violations.violated) {
@@ -303,7 +322,6 @@ function renderResults() {
             } else {
               html += `<span class="metric-warn">${violationRate}% — check Round${violatingRoundIndices.length > 1 ? 's' : ''} ${violatingRoundIndices.join(', ')}</span>`;
             }
-            // Click failure aggregation
             const allClickResults = sim.rounds.flatMap(r => r.clickResults || []);
             if (allClickResults.length > 0) {
               const clickFails = allClickResults.filter(c => !c.success).length;
@@ -319,7 +337,6 @@ function renderResults() {
             simEl.appendChild(info);
           }
 
-          // Round entries
           sim.rounds.forEach((round, ri) => {
             const rowEl = document.createElement('div');
             rowEl.className = 'res-round';
@@ -360,7 +377,37 @@ function renderResults() {
 
             simEl.appendChild(rowEl);
 
-            // Show click results and page jumps for this round
+            // Per-step rows with individual play buttons
+            if (round.stepResults && round.stepResults.length > 1 && round.status === 'done') {
+              round.stepResults.forEach((sr, stpIdx) => {
+                const stepRow = document.createElement('div');
+                stepRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0 2px 68px;font-size:10px;color:#737373;';
+
+                const stepLabel = document.createElement('span');
+                stepLabel.textContent = sr.stepName;
+                stepLabel.style.cssText = 'min-width:44px;';
+                stepRow.appendChild(stepLabel);
+
+                const stepTime = document.createElement('span');
+                stepTime.textContent = sr.duration != null ? sr.duration.toFixed(1) + 's' : '-';
+                stepTime.style.cssText = 'min-width:32px;';
+                stepRow.appendChild(stepTime);
+
+                const isStepPlaying = playingRoundRef && playingRoundRef.taskIdx === ti && playingRoundRef.simIdx === si && playingRoundRef.roundIdx === ri && playingRoundRef.stepIdx === stpIdx;
+                const stepPlayBtn = document.createElement('button');
+                stepPlayBtn.style.cssText = 'background:none;border:1px solid #404040;border-radius:4px;color:' + (isStepPlaying ? '#fca5a5' : '#a3a3a3') + ';cursor:pointer;padding:1px 6px;font-size:9px;';
+                stepPlayBtn.textContent = isStepPlaying ? '\u25A0' : '\u25B6';
+                stepPlayBtn.title = isStepPlaying ? 'Stop' : 'Play ' + sr.stepName;
+                stepPlayBtn.addEventListener('click', () => {
+                  if (isStepPlaying) { stopPlayback(); }
+                  else { playStep(ti, si, ri, stpIdx); }
+                });
+                stepRow.appendChild(stepPlayBtn);
+
+                simEl.appendChild(stepRow);
+              });
+            }
+
             if (round.clickResults && round.clickResults.length > 0) {
               const clickInfo = document.createElement('div');
               clickInfo.style.cssText = 'padding:2px 0 2px 68px;font-size:10px;color:#737373;';
@@ -376,9 +423,9 @@ function renderResults() {
             if (round.pageJumps && round.pageJumps.length > 1) {
               const jumpEl = document.createElement('div');
               jumpEl.style.cssText = 'padding:1px 0 3px 68px;font-size:9px;color:#525252;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-              jumpEl.title = round.pageJumps.join(' → ');
+              jumpEl.title = round.pageJumps.join(' \u2192 ');
               const shortUrls = round.pageJumps.map(u => { try { return new URL(u).pathname; } catch (_) { return u; } });
-              jumpEl.textContent = shortUrls.join(' → ');
+              jumpEl.textContent = shortUrls.join(' \u2192 ');
               simEl.appendChild(jumpEl);
             }
           });

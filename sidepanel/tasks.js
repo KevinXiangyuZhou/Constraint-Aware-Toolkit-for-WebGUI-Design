@@ -1,9 +1,36 @@
 // Task management, UI rendering, tool button event listeners
 
-// ====== Task Management ======
+// ====== Task & Step Management ======
 
 function generateTaskId() {
   return 'task-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+}
+
+function generateStepId() {
+  return 'step-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
+}
+
+function nextStepName(task) {
+  // Find the highest existing "Step N" number in this task and increment
+  let max = 0;
+  if (task && task.steps) {
+    for (const s of task.steps) {
+      const m = s.name.match(/^Step\s+(\d+)$/);
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+  }
+  return 'Step ' + (max + 1);
+}
+
+function createStep(name) {
+  return {
+    id: generateStepId(),
+    name: name || 'Step 1',
+    items: [],
+    undoStack: [],
+    redoStack: [],
+    expanded: true
+  };
 }
 
 function createTask(name) {
@@ -12,86 +39,56 @@ function createTask(name) {
     name = 'Task ' + nextTaskNumber;
     nextTaskNumber++;
   }
+  const step = createStep('Step 1');
   const task = {
     id,
     name,
-    items: [],
-    undoStack: [],
-    redoStack: [],
-    expanded: false
+    steps: [step],
+    activeStepIdx: 0,
+    expanded: true
   };
   tasks.push(task);
   return task;
 }
 
-var gotoItemCounter = 0;
-function makeGotoItem(url) {
-  return { id: 'goto-' + Date.now() + '-' + (gotoItemCounter++), type: 'goto', data: { url: url || '' }, enabled: true };
+// Helper: get the active step of a task
+function getActiveStep(task) {
+  if (!task || !task.steps || task.steps.length === 0) return null;
+  const idx = Math.max(0, Math.min(task.activeStepIdx || 0, task.steps.length - 1));
+  return task.steps[idx];
 }
 
-async function insertInitialGoto(task) {
-  try {
-    const tab = await getCurrentTab();
-    if (tab?.url) {
-      const item = makeGotoItem(tab.url);
-      task.items.unshift(item);
-    }
-  } catch (_) {}
-}
-
-async function saveActiveTaskState() {
-  if (!activeTaskId) return;
+// Helper: get active step of the currently active task
+function getActiveTaskStep() {
   const task = tasks.find(t => t.id === activeTaskId);
-  if (!task) return;
+  return task ? getActiveStep(task) : null;
+}
+
+async function saveActiveStepState() {
+  const step = getActiveTaskStep();
+  if (!step) return;
   try {
     const st = await sendToContentScript({ type: 'getState' });
     if (st) {
-      task.items = st.items || [];
-      task.undoStack = st.undoStack || [];
-      task.redoStack = st.redoStack || [];
+      step.items = st.items || [];
+      step.undoStack = st.undoStack || [];
+      step.redoStack = st.redoStack || [];
     }
   } catch (_) {}
 }
 
-async function addNewTask() {
-  await saveActiveTaskState();
+// Alias kept for backward compat with experiment runner
+var saveActiveTaskState = saveActiveStepState;
 
-  const task = createTask();
-  await insertInitialGoto(task);
-  activeTaskId = task.id;
-
+async function loadStepIntoPage(step) {
+  if (!step) return;
   try {
     await sendToContentScript({
       type: 'loadTaskState',
-      items: task.items,
-      undoStack: [],
-      redoStack: []
+      items: step.items,
+      undoStack: step.undoStack || [],
+      redoStack: step.redoStack || []
     });
-    updateCountsFromState({ waypoints: [], constraints: [] });
-    btnUndo.disabled = true;
-    btnRedo.disabled = true;
-  } catch (_) {}
-
-  renderTasksList();
-  renderExpChecks();
-}
-
-async function switchToTask(taskId) {
-  if (activeTaskId === taskId) return;
-
-  await saveActiveTaskState();
-
-  activeTaskId = taskId;
-  const newTask = tasks.find(t => t.id === taskId);
-
-  try {
-    await sendToContentScript({
-      type: 'loadTaskState',
-      items: newTask ? newTask.items : [],
-      undoStack: newTask ? newTask.undoStack : [],
-      redoStack: newTask ? newTask.redoStack : []
-    });
-
     const st = await sendToContentScript({ type: 'getState' });
     if (st) {
       updateCountsFromState(st);
@@ -99,6 +96,44 @@ async function switchToTask(taskId) {
       btnRedo.disabled = !(st.canRedo);
     }
   } catch (_) {}
+}
+
+async function switchToStep(task, stepIdx) {
+  // Save current step first
+  await saveActiveStepState();
+  task.activeStepIdx = stepIdx;
+  await loadStepIntoPage(getActiveStep(task));
+  renderTasksList();
+}
+
+async function addNewTask() {
+  await saveActiveStepState();
+
+  const task = createTask();
+  activeTaskId = task.id;
+
+  await loadStepIntoPage(getActiveStep(task));
+  renderTasksList();
+  renderExpChecks();
+}
+
+async function switchToTask(taskId) {
+  if (activeTaskId === taskId) return;
+
+  await saveActiveStepState();
+
+  activeTaskId = taskId;
+  const newTask = tasks.find(t => t.id === taskId);
+
+  if (newTask) {
+    await loadStepIntoPage(getActiveStep(newTask));
+  } else {
+    try {
+      await sendToContentScript({
+        type: 'loadTaskState', items: [], undoStack: [], redoStack: []
+      });
+    } catch (_) {}
+  }
 
   renderTasksList();
 }
@@ -117,19 +152,8 @@ async function deleteTask(taskId) {
       await switchToTask(tasks[nextIdx].id);
     } else {
       const task = createTask();
-      await insertInitialGoto(task);
       activeTaskId = task.id;
-      try {
-        await sendToContentScript({
-          type: 'loadTaskState',
-          items: task.items,
-          undoStack: [],
-          redoStack: []
-        });
-        updateCountsFromState({ waypoints: [], constraints: [] });
-        btnUndo.disabled = true;
-        btnRedo.disabled = true;
-      } catch (_) {}
+      await loadStepIntoPage(getActiveStep(task));
     }
   }
 
@@ -150,11 +174,61 @@ function renameTask(taskId, newName) {
   return false;
 }
 
+function renameStep(task, stepIdx, newName) {
+  newName = newName.trim();
+  if (!newName) return false;
+  if (task.steps[stepIdx]) {
+    task.steps[stepIdx].name = newName;
+    renderTasksList();
+    return true;
+  }
+  return false;
+}
+
+async function addStepToTask(task) {
+  // Save current step before adding new one
+  if (task.id === activeTaskId) await saveActiveStepState();
+  const step = createStep(nextStepName(task));
+  task.steps.push(step);
+  task.activeStepIdx = task.steps.length - 1;
+  if (task.id === activeTaskId) {
+    await loadStepIntoPage(step);
+  }
+  renderTasksList();
+  renderExpChecks();
+}
+
+async function deleteStep(task, stepIdx) {
+  if (task.steps.length <= 1) return; // keep at least one step
+
+  const wasActive = task.id === activeTaskId && task.activeStepIdx === stepIdx;
+  task.steps.splice(stepIdx, 1);
+
+  // Adjust activeStepIdx
+  if (task.activeStepIdx >= task.steps.length) {
+    task.activeStepIdx = task.steps.length - 1;
+  }
+
+  if (wasActive && task.id === activeTaskId) {
+    await loadStepIntoPage(getActiveStep(task));
+  }
+
+  renderTasksList();
+  renderExpChecks();
+}
+
 async function deleteItemFromTask(taskId, itemId) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
 
-  task.items = task.items.filter(i => i.id !== itemId);
+  // Find and remove item from whichever step contains it
+  for (const step of task.steps) {
+    const idx = step.items.findIndex(i => i.id === itemId);
+    if (idx >= 0) {
+      step.items.splice(idx, 1);
+      break;
+    }
+  }
 
   if (taskId === activeTaskId) {
     try {
@@ -175,8 +249,10 @@ async function toggleConstraintItem(taskId, itemId, enabled) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
 
-  const item = task.items.find(i => i.id === itemId);
-  if (item) item.enabled = enabled;
+  for (const step of task.steps) {
+    const item = step.items.find(i => i.id === itemId);
+    if (item) { item.enabled = enabled; break; }
+  }
 
   if (taskId === activeTaskId) {
     try {
@@ -187,13 +263,15 @@ async function toggleConstraintItem(taskId, itemId, enabled) {
   renderTasksList();
 }
 
-async function reorderTaskItems(taskId, newItemIds) {
+async function reorderStepItems(taskId, stepId, newItemIds) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
+  const step = task.steps.find(s => s.id === stepId);
+  if (!step) return;
 
   const itemMap = {};
-  task.items.forEach(i => { itemMap[i.id] = i; });
-  task.items = newItemIds.map(id => itemMap[id]).filter(Boolean);
+  step.items.forEach(i => { itemMap[i.id] = i; });
+  step.items = newItemIds.map(id => itemMap[id]).filter(Boolean);
 
   if (taskId === activeTaskId) {
     try {
@@ -204,15 +282,6 @@ async function reorderTaskItems(taskId, newItemIds) {
   }
 
   renderTasksList();
-}
-
-async function addGotoToActiveTask(url) {
-  const task = tasks.find(t => t.id === activeTaskId);
-  if (!task) return;
-  const item = makeGotoItem(url);
-  task.items.push(item);
-  renderTasksList();
-  renderExpChecks();
 }
 
 function updateCountsFromState(st) {
@@ -273,122 +342,193 @@ function renderTasksList() {
     bodyEl.className = 'task-body';
     bodyEl.style.display = task.expanded ? 'block' : 'none';
 
-    const itemsListEl = document.createElement('div');
-    itemsListEl.className = 'task-items-list';
-    itemsListEl.dataset.taskId = task.id;
+    // Render each step
+    task.steps.forEach((step, stepIdx) => {
+      const isActiveStep = isActive && task.activeStepIdx === stepIdx;
 
-    let wpNum = 0;
-    let cNum = 0;
-    let clickNum = 0;
+      const stepEl = document.createElement('div');
+      stepEl.className = 'step-container' + (isActiveStep ? ' active-step' : '');
 
-    // Determine the first page URL in the task for comparison
-    const firstPageUrl = (() => {
-      for (const it of task.items) {
-        const u = it.data?.pageUrl || it.data?.url;
-        if (u) return u.split('#')[0];
-      }
-      return null;
-    })();
+      // Step header
+      const stepHeader = document.createElement('div');
+      stepHeader.className = 'step-header';
 
-    task.items.forEach(item => {
-      const row = document.createElement('div');
-      row.className = 'task-item-row';
-      row.dataset.itemId = item.id;
-      row.draggable = true;
+      const stepExpandIcon = document.createElement('span');
+      stepExpandIcon.className = 'step-expand-icon' + (step.expanded ? ' expanded' : '');
+      stepExpandIcon.textContent = '\u25B6';
 
-      const handle = document.createElement('span');
-      handle.className = 'drag-handle';
-      handle.textContent = '\u2807';
+      const stepNameEl = document.createElement('span');
+      stepNameEl.className = 'step-name';
+      stepNameEl.textContent = step.name;
 
-      const icon = document.createElement('span');
-      icon.className = 'item-icon';
+      const stepActionsEl = document.createElement('div');
+      stepActionsEl.className = 'step-actions';
 
-      const label = document.createElement('span');
-      label.className = 'item-label';
-
-      if (item.type === 'waypoint') {
-        wpNum++;
-        icon.classList.add('waypoint-icon');
-        icon.textContent = '\u25CF';
-        label.textContent = 'Waypoint ' + wpNum;
-      } else if (item.type === 'waypoint_click') {
-        clickNum++;
-        icon.classList.add('click-icon');
-        icon.textContent = '\u25CF';
-        label.textContent = 'Click ' + clickNum;
-        if (item.data?.selector) label.title = item.data.selector;
-      } else if (item.type === 'goto') {
-        icon.classList.add('goto-icon');
-        icon.textContent = '\u2192';
-        const displayUrl = item.data?.url || '';
-        const shortUrl = displayUrl.length > 40 ? displayUrl.slice(0, 37) + '\u2026' : displayUrl;
-        label.textContent = 'Go to ' + shortUrl;
-        label.title = displayUrl;
-      } else {
-        cNum++;
-        const isKeepOut = item.data?.constraintType === 'keep-out';
-        icon.classList.add('constraint-icon');
-        if (isKeepOut) icon.classList.add('keep-out');
-        icon.textContent = '\u25A1';
-        const geom = item.data?.type === 'path' ? 'Corridor' : 'Area';
-        const cType = isKeepOut ? 'Keep-Out' : 'Keep-In';
-        const enabledLabel = item.enabled !== false ? 'Enabled' : 'Disabled';
-        label.textContent = geom + ' ' + cType + ' (' + enabledLabel + ')';
-      }
-
-      row.appendChild(handle);
-      row.appendChild(icon);
-      row.appendChild(label);
-
-      // Show a small hostname badge if this item is from a different page
-      const itemUrl = item.data?.pageUrl || (item.type === 'goto' ? item.data?.url : null);
-      if (itemUrl && firstPageUrl && itemUrl.split('#')[0] !== firstPageUrl) {
-        try {
-          const badge = document.createElement('span');
-          badge.className = 'item-page-badge';
-          badge.textContent = new URL(itemUrl).hostname;
-          badge.title = itemUrl;
-          row.appendChild(badge);
-        } catch (_) {}
-      }
-
-      // Constraint toggle
-      if (item.type === 'constraint') {
-        const toggleWrap = document.createElement('span');
-        toggleWrap.className = 'item-toggle-wrap';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = item.enabled !== false;
-        checkbox.title = item.enabled !== false ? 'Disable constraint' : 'Enable constraint';
-        checkbox.addEventListener('change', () => {
-          toggleConstraintItem(task.id, item.id, checkbox.checked);
-        });
-        toggleWrap.appendChild(checkbox);
-        row.appendChild(toggleWrap);
-      }
-
-      // Delete button
-      const delBtn = document.createElement('button');
-      delBtn.className = 'item-action-btn';
-      delBtn.title = 'Delete';
-      delBtn.textContent = '\u00D7';
-      delBtn.addEventListener('click', (e) => {
+      const stepRenameBtn = document.createElement('button');
+      stepRenameBtn.className = 'task-action-btn';
+      stepRenameBtn.title = 'Rename step';
+      stepRenameBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+      stepRenameBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        deleteItemFromTask(task.id, item.id);
+        startStepInlineRename(stepHeader, task, stepIdx);
       });
-      row.appendChild(delBtn);
 
-      itemsListEl.appendChild(row);
+      const stepDeleteBtn = document.createElement('button');
+      stepDeleteBtn.className = 'task-action-btn delete-btn';
+      stepDeleteBtn.title = 'Delete step';
+      stepDeleteBtn.textContent = '\u00D7';
+      stepDeleteBtn.style.fontSize = '12px';
+      stepDeleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteStep(task, stepIdx);
+      });
+
+      stepActionsEl.appendChild(stepRenameBtn);
+      if (task.steps.length > 1) stepActionsEl.appendChild(stepDeleteBtn);
+
+      stepHeader.appendChild(stepExpandIcon);
+      stepHeader.appendChild(stepNameEl);
+      stepHeader.appendChild(stepActionsEl);
+      stepEl.appendChild(stepHeader);
+
+      // Step expand/collapse
+      stepExpandIcon.addEventListener('click', (e) => {
+        e.stopPropagation();
+        step.expanded = !step.expanded;
+        renderTasksList();
+      });
+
+      // Click header to switch to this step
+      stepHeader.addEventListener('click', () => {
+        if (!isActive) {
+          switchToTask(task.id);
+        } else if (!isActiveStep) {
+          switchToStep(task, stepIdx);
+        } else {
+          step.expanded = !step.expanded;
+          renderTasksList();
+        }
+      });
+
+      // Step items list (collapsible)
+      if (step.expanded) {
+        const itemsListEl = document.createElement('div');
+        itemsListEl.className = 'step-items-list';
+        itemsListEl.dataset.taskId = task.id;
+        itemsListEl.dataset.stepId = step.id;
+
+        let wpNum = 0, cNum = 0, clickNum = 0;
+
+        step.items.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'task-item-row';
+          row.dataset.itemId = item.id;
+          row.draggable = true;
+
+          const handle = document.createElement('span');
+          handle.className = 'drag-handle';
+          handle.textContent = '\u2807';
+
+          const icon = document.createElement('span');
+          icon.className = 'item-icon';
+
+          const label = document.createElement('span');
+          label.className = 'item-label';
+
+          if (item.type === 'waypoint') {
+            wpNum++;
+            icon.classList.add('waypoint-icon');
+            icon.textContent = '\u25CF';
+            label.textContent = 'Waypoint ' + wpNum;
+          } else if (item.type === 'waypoint_click') {
+            clickNum++;
+            icon.classList.add('click-icon');
+            icon.textContent = '\u25CF';
+            if (item.data?.gotoUrl) {
+              const displayUrl = item.data.gotoUrl;
+              const shortUrl = displayUrl.length > 30 ? displayUrl.slice(0, 27) + '\u2026' : displayUrl;
+              label.textContent = 'Click ' + clickNum + ' (Go to ' + shortUrl + ')';
+              label.title = displayUrl;
+            } else {
+              label.textContent = 'Click ' + clickNum;
+              if (item.data?.selector) label.title = item.data.selector;
+            }
+          } else if (item.type === 'goto') {
+            icon.classList.add('goto-icon');
+            icon.textContent = '\u2192';
+            const displayUrl = item.data?.url || '';
+            const shortUrl = displayUrl.length > 40 ? displayUrl.slice(0, 37) + '\u2026' : displayUrl;
+            label.textContent = 'Go to ' + shortUrl;
+            label.title = displayUrl;
+          } else {
+            cNum++;
+            const isKeepOut = item.data?.constraintType === 'keep-out';
+            icon.classList.add('constraint-icon');
+            if (isKeepOut) icon.classList.add('keep-out');
+            icon.textContent = '\u25A1';
+            const geom = item.data?.type === 'path' ? 'Corridor' : 'Area';
+            const cType = isKeepOut ? 'Keep-Out' : 'Keep-In';
+            const enabledLabel = item.enabled !== false ? 'Enabled' : 'Disabled';
+            label.textContent = geom + ' ' + cType + ' (' + enabledLabel + ')';
+          }
+
+          row.appendChild(handle);
+          row.appendChild(icon);
+          row.appendChild(label);
+
+          // Constraint toggle
+          if (item.type === 'constraint') {
+            const toggleWrap = document.createElement('span');
+            toggleWrap.className = 'item-toggle-wrap';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = item.enabled !== false;
+            checkbox.title = item.enabled !== false ? 'Disable constraint' : 'Enable constraint';
+            checkbox.addEventListener('change', () => {
+              toggleConstraintItem(task.id, item.id, checkbox.checked);
+            });
+            toggleWrap.appendChild(checkbox);
+            row.appendChild(toggleWrap);
+          }
+
+          // Delete button
+          const delBtn = document.createElement('button');
+          delBtn.className = 'item-action-btn';
+          delBtn.title = 'Delete';
+          delBtn.textContent = '\u00D7';
+          delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteItemFromTask(task.id, item.id);
+          });
+          row.appendChild(delBtn);
+
+          itemsListEl.appendChild(row);
+        });
+
+        if (step.items.length === 0) {
+          const emptyMsg = document.createElement('div');
+          emptyMsg.className = 'task-empty-msg';
+          emptyMsg.textContent = 'No items yet';
+          itemsListEl.appendChild(emptyMsg);
+        }
+
+        stepEl.appendChild(itemsListEl);
+        setupStepItemDragDrop(itemsListEl, task.id, step.id);
+      }
+
+      bodyEl.appendChild(stepEl);
     });
 
-    if (task.items.length === 0) {
-      const emptyMsg = document.createElement('div');
-      emptyMsg.className = 'task-empty-msg';
-      emptyMsg.textContent = 'No items yet';
-      itemsListEl.appendChild(emptyMsg);
-    }
+    // "Add Step" button
+    const addStepBtn = document.createElement('div');
+    addStepBtn.className = 'step-add-btn';
+    addStepBtn.textContent = '+ Add Step';
+    addStepBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addStepToTask(task);
+    });
+    bodyEl.appendChild(addStepBtn);
 
-    bodyEl.appendChild(itemsListEl);
     taskEl.appendChild(bodyEl);
 
     // Event listeners
@@ -416,9 +556,6 @@ function renderTasksList() {
       e.stopPropagation();
       deleteTask(task.id);
     });
-
-    // Setup drag-and-drop for items
-    setupItemDragDrop(itemsListEl, task.id);
 
     tasksListEl.appendChild(taskEl);
   });
@@ -452,20 +589,41 @@ function startInlineRename(headerEl, task) {
 
   input.addEventListener('blur', finishRename);
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      input.blur();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      input.value = task.name;
-      input.blur();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.value = task.name; input.blur(); }
   });
 }
 
-// ====== Drag and Drop for Task Items ======
+function startStepInlineRename(stepHeader, task, stepIdx) {
+  const nameEl = stepHeader.querySelector('.step-name');
+  if (!nameEl) return;
 
-function setupItemDragDrop(container, taskId) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'step-name-input';
+  input.value = task.steps[stepIdx].name;
+
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  function finishRename() {
+    if (finished) return;
+    finished = true;
+    renameStep(task, stepIdx, input.value);
+  }
+
+  input.addEventListener('blur', finishRename);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); input.value = task.steps[stepIdx].name; input.blur(); }
+  });
+}
+
+// ====== Drag and Drop for Step Items ======
+
+function setupStepItemDragDrop(container, taskId, stepId) {
   let draggedItemId = null;
 
   container.addEventListener('dragstart', (e) => {
@@ -516,7 +674,7 @@ function setupItemDragDrop(container, taskId) {
       filteredIds.push(draggedItemId);
     }
 
-    reorderTaskItems(taskId, filteredIds);
+    reorderStepItems(taskId, stepId, filteredIds);
   });
 }
 
@@ -543,12 +701,6 @@ btnPathKeepIn.addEventListener('click', () => setModeInPage('addPathKeepIn'));
 btnPathKeepOut.addEventListener('click', () => setModeInPage('addPathKeepOut'));
 btnResizeConstraint.addEventListener('click', () => setModeInPage('resizeConstraint'));
 btnAddClick.addEventListener('click', () => setModeInPage('addClickWaypoint'));
-document.getElementById('btn-add-goto').addEventListener('click', async () => {
-  const tab = await getCurrentTab().catch(() => null);
-  const defaultUrl = tab?.url || 'https://';
-  const url = prompt('Enter URL for Go-to action:', defaultUrl);
-  if (url && url.trim()) addGotoToActiveTask(url.trim());
-});
 btnQuitDesign.addEventListener('click', () => setModeInPage('passthrough'));
 
 btnUndo.addEventListener('click', async () => {
@@ -591,24 +743,24 @@ async function onCorridorWidthChange() {
 corridorWidthSlider.addEventListener('input', onCorridorWidthChange);
 
 btnClear.addEventListener('click', async () => {
-  if (confirm('Clear all waypoints and constraints?')) {
+  if (confirm('Clear all items in the current step?')) {
     try {
       await sendToContentScript({ type: 'clearAll' });
       waypointCount = 0;
       constraintCount = 0;
       waypointCountSpan.textContent = '0';
       constraintCountSpan.textContent = '0';
-      // Clear active task's items
-      const task = tasks.find(t => t.id === activeTaskId);
-      if (task) {
-        task.items = [];
-        task.undoStack = [];
-        task.redoStack = [];
+      // Clear active step's items
+      const step = getActiveTaskStep();
+      if (step) {
+        step.items = [];
+        step.undoStack = [];
+        step.redoStack = [];
       }
       btnUndo.disabled = true;
       btnRedo.disabled = true;
       renderTasksList();
-      updateStatus('Cleared all waypoints and constraints', 'success');
+      updateStatus('Cleared all items in step', 'success');
     } catch (err) {
       updateStatus('Refresh the page first, then try again.', 'error');
     }

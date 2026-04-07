@@ -1,7 +1,7 @@
 {
   "_description": "Young children \u2014 short planning horizon, small forearm, high motor noise, weak awareness, underdeveloped motor control",
   "Tp": 0.05,
-  "Th": 0.15,
+  "Th": 0.25,
   "nc": [
     0.36,
     0.036
@@ -10,10 +10,10 @@
   "planner_weights": {
     "jerk": 3e-07,
     "progress": 3e-08,
-    "constraint": 15,
-    "contour": 3,
-    "lag": 0.3,
-    "desired_speed": 0.12
+    "constraint": 20,
+    "contour": 1,
+    "lag": 0.5,
+    "desired_speed": 0.18
   },
   "speed_model": {
     "type": "gam",

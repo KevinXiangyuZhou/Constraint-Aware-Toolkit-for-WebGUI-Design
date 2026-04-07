@@ -238,19 +238,23 @@ function addClickWaypoint(x, y) {
     dwellMs: 200,
     toleranceRadiusPx: 50
   };
+  const anchor = el ? el.closest('a[href]') : null;
+  if (anchor && anchor.href) {
+    const href = anchor.getAttribute('href') || '';
+    const isReal = anchor.href.startsWith('http') &&
+      !href.startsWith('#') &&
+      !href.startsWith('javascript:') &&
+      anchor.href.split('#')[0] !== window.location.href.split('#')[0];
+    if (isReal) {
+      data.gotoUrl = anchor.href;
+    }
+  }
+
   const item = { id: generateItemId(), type: 'waypoint_click', data: data, enabled: true };
   state.items.push(item);
 
-  const anchor = el ? el.closest('a[href]') : null;
-  let gotoItem = null;
-  if (anchor && anchor.href) {
-    gotoItem = { id: generateItemId(), type: 'goto', data: { url: anchor.href }, enabled: true };
-    state.items.push(gotoItem);
-  }
-
   syncStateFromItems();
   state.undoStack.push({ itemId: item.id, itemCopy: JSON.parse(JSON.stringify(item)) });
-  if (gotoItem) state.undoStack.push({ itemId: gotoItem.id, itemCopy: JSON.parse(JSON.stringify(gotoItem)) });
   state.redoStack = [];
   renderOverlay();
   try {
@@ -260,14 +264,6 @@ function addClickWaypoint(x, y) {
       waypointCount: state.waypoints.length,
       constraintCount: state.constraints.length
     });
-    if (gotoItem) {
-      chrome.runtime.sendMessage({
-        type: 'itemAdded',
-        item: gotoItem,
-        waypointCount: state.waypoints.length,
-        constraintCount: state.constraints.length
-      });
-    }
   } catch (_) {}
 }
 

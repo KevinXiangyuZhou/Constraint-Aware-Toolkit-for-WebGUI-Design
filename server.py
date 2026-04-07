@@ -101,10 +101,10 @@ async def simulate(request: SimulateRequest):
     """
     try:
         # Validate waypoints
-        if len(request.task.waypoints) < 2:
+        if len(request.task.waypoints) < 1:
             raise HTTPException(
                 status_code=400,
-                detail="At least 2 waypoints are required"
+                detail="At least 1 waypoint is required"
             )
         
         # Create temporary task.json file
